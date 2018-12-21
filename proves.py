@@ -27,9 +27,10 @@ class Base:
         # default key format, note that autoincrmental has its own
         self._format_key='{}:{}'
         self._format_id_index=f'{self._name}.id.index'
+        self._format_id_index_reverse=f'{self._name}.id.reverse.index'
         # to order fields
         self._monotonic=f'{self._name}.monotonic'
-
+        self._indexes=indexes
 
     def fkey(self, k):
         # return name:k
@@ -81,10 +82,15 @@ class Base:
         p=red.pipeline()
 
         # feed the pipeline with all keys we need
-        for s in red.scan_iter(match=f'{self._name}:{match}'):
+        #for s in red.scan_iter(match=f'{self._name}:{match}'):
+        #    p.hmget(s, self._fields)
+        #    claus.append(s)
+
+        r=red.zscan(f'{self._name}.id.index')[1]
+        for t in r:
             # for s in red.zrangebyscore(self._format_id_index, '-inf', '+inf'):
-            p.hmget(s, self._fields)
-            claus.append(s)
+            p.hmget(t[0], self._fields)
+            claus.append(t[0])
 
         # bring data in one operation
         a=0
@@ -109,10 +115,33 @@ class Base:
         # make indexes...
         # always id index
         d=red.incr(self._monotonic)
-        red.zadd(self._format_id_index, d, key)
+        red.zadd(self._format_id_index, {key:d})
         # make other indexes
         # for i in self._indexes:
 
+    def rebuilt_index(self):
+        # delete id index
+        logger.info(f"deleting id index of {self._name}")
+        red.delete(self._format_id_index)
+        logger.info("Rebuilding id index")
+        key_list=[]
+        for s in red.scan_iter(match=f'{self._name}:*'):
+            key_list.append(s)
+        key_list.sort()
+        print(key_list)
+        for k in key_list:
+            d=red.incr(self._monotonic)
+            logger.debug(f'{k} has score {d}')
+            red.zadd(self._format_id_index, {k:d})
+        logger.info("id index rebuilt")            
+
+        key_list.sort(reverse=True)
+        print(key_list)
+        for k in key_list:
+            d=red.incr(self._monotonic)
+            logger.debug(f'{k} has score {d}')
+            red.zadd(self._format_id_index_reverse, {k:d})
+        logger.info("id index rebuilt")            
 
     def __str__(self):
         # print all records
@@ -149,7 +178,7 @@ class Record(Base):
 
     def reset(self, key, **kwargs):
         # set the record with key key        
-        return self.set(key, **kwargs)
+        return red.set(key, **kwargs)
 
 
 class RecordAuto(Base):
@@ -206,14 +235,24 @@ class Config(Record):
             )
 
 
-
-red.zadd('algo', {"Pere", 1), ("Juanito", 2),) )
+"""
+red.zadd('algo', {"XXJesús":1,  "Antonio": 3, "Pere":1, "Juanito":2} )
 
 print(red.zrangebyscore('algo', min=0, max=10))
 
 # redis.execute_command('ZADD', set_name, 'NX', score, key)
 
 exit(0)
+"""
+
+"""
+r=red.zscan('area.id.index')[1]
+for t in r:
+    print(t[0])
+    #red.delete(r)
+
+exit(0)
+"""
 config=Config()
 config.new('user.name', value='pepito')
 config.new('user.email', value='pepito@blahblah')
