@@ -3,6 +3,9 @@ from loguru import logger
 from datetime import datetime
 from collections import namedtuple
 import tablib
+from random import choice
+from string import ascii_uppercase
+
 
 red=redis.Redis(
     host='localhost',
@@ -34,7 +37,11 @@ class Base:
 
     def fkey(self, k):
         # return name:k
-        return self._format_key.format(self._name, k)
+        # logger.debug(f'formating key {k}')
+        k=str(k)
+        k=k.replace(':', '') # remove the separator from key
+        return f'{self._name}:{k}'
+        # return self._format_key.format(self._name, k)
 
     def check_set(self, **kwargs):
         # checks if each field exists on field list
@@ -57,6 +64,21 @@ class Base:
         """
         return self._record(*record)
 
+    def record_as_dict(self, r):
+        """ return an ordereddict as a dict """
+        d={}
+        for t in r:
+            print(t)
+            d[t[0]]=t[1]
+        return d
+
+    def get_cardinal(self, key):
+        # return the cardinality if exist
+        t=key.split(':')
+        if len(t)>0:
+            return t[1]
+        else:
+            return '-1' 
 
     def get(self, key):
         """ get the record
@@ -74,7 +96,7 @@ class Base:
         #logger.debug(f'record is {dir(self._record)}')        
         return self.make_record(rec)
 
-    def filter(self, match='*'):
+    def filter(self, match='*', order='id'):
         # return a bunch of records
         tini=datetime.now()
         dataset=[]
@@ -85,26 +107,32 @@ class Base:
         #for s in red.scan_iter(match=f'{self._name}:{match}'):
         #    p.hmget(s, self._fields)
         #    claus.append(s)
-
-        r=red.zscan(f'{self._name}.id.index')[1]
+        # logger.debug(f"using index {order}")
+        r=red.zscan(f'{self._name}.{order}.index')[1]
+        # logger.debug(f"index is {r}")
         for t in r:
             # for s in red.zrangebyscore(self._format_id_index, '-inf', '+inf'):
-            p.hmget(t[0], self._fields)
-            claus.append(t[0])
+            # take the key part
+            g=t[0].split(':')[1]            
+            # logger.debug(f"g is {g}")
+            p.hmget(self.fkey(g), self._fields)
+            claus.append(g)
 
         # bring data in one operation
         a=0
         for h in p.execute():
+            # logger.debug(f'Record is {h}')
             h[0]=claus[a]                        
             dataset.append(self.make_record(h))
             a+=1
         logger.debug(f'{len(dataset)} records in {datetime.now()-tini}')
         return dataset        
 
-    def get_tab(self):
+    def get_tab(self, match='*', order='id'):
         # return a tablib with all data
+        logger.debug(f"order is {order}")
         tab=tablib.Dataset(headers=self._fields)
-        for t in self.filter():            
+        for t in self.filter(match=match, order=order):            
             tab.append([f for f in t])
         return tab
 
@@ -114,34 +142,46 @@ class Base:
         red.hmset(key, kwargs)
         # make indexes...
         # always id index
-        d=red.incr(self._monotonic)
-        red.zadd(self._format_id_index, {key:d})
+        # d=red.incr(self._monotonic)
+        # add to zset the key is id:key and the score comes from key_to_cardinal
+        # if key_to_cardinal is 0 it is because the key is lexicographical
+        c=self.get_cardinal(key)
+        red.zadd(self._format_id_index, { f'{c}:{c}':0 })
         # make other indexes
-        # for i in self._indexes:
+        for i in self._indexes:
+            iname=f'{self._name}.{i}.index'
+            # if the field value of the index is present
+            if i in kwargs.keys():
+                red.zadd(iname, { f"{kwargs[i]}:{self.get_cardinal(key)}":0 })    
+            # logger.debug(f'record is {r} and value is {v}')
+            # assign the field value plus the key
+            
+
 
     def rebuilt_index(self):
+        # delete indices
+        for i in self._indexes:
+            iname=f'{self._name}.{i}.index'
+            red.delete(iname)
         # delete id index
         logger.info(f"deleting id index of {self._name}")
         red.delete(self._format_id_index)
+        # build indices
         logger.info("Rebuilding id index")
-        key_list=[]
         for s in red.scan_iter(match=f'{self._name}:*'):
-            key_list.append(s)
-        key_list.sort()
-        print(key_list)
-        for k in key_list:
-            d=red.incr(self._monotonic)
-            logger.debug(f'{k} has score {d}')
-            red.zadd(self._format_id_index, {k:d})
-        logger.info("id index rebuilt")            
+            # add key to the id index
+            red.zadd(self._format_id_index, {s:0})
+            r=red.hmget(s, self._fields)
+            # for each index
+            for i in self._indexes: # index is the name of the field                
+                iname=f'{self._name}.{i}.index'
+                #logger.debug(f"{iname}")
+                #logger.debug(f"index is {i} and position is {self._fields.index(i)}")
 
-        key_list.sort(reverse=True)
-        print(key_list)
-        for k in key_list:
-            d=red.incr(self._monotonic)
-            logger.debug(f'{k} has score {d}')
-            red.zadd(self._format_id_index_reverse, {k:d})
-        logger.info("id index rebuilt")            
+                v=r[self._fields.index(i)]
+                # logger.debug(f'record is {r} and value is {v}')
+                # assign the field value plus the key
+                red.zadd(iname, { f"{v}:{self.get_cardinal(s)}":0 })
 
     def __str__(self):
         # print all records
@@ -184,21 +224,21 @@ class Record(Base):
 class RecordAuto(Base):
     # autoincremental table
 
-    def __init__(self, name, fields):
-        super().__init__(name, fields)        
+    def __init__(self, name, fields, indexes=()):
+        super().__init__(name, fields, indexes)        
         # name of the counter
         self._counter_name=f'{self._name}counter'
         # the key is the table name plus the record number
-        self._format_key='{}:{:012d}'
+        self._format_key='{:012d}'
         # set the counter if not exists
-        red.setnx(self._counter_name, 1)
+        red.setnx(self._counter_name, -1)
 
 
     def make_key(self):
         # increment counter
         d=red.incr(self._counter_name)
         # return the key after incr in set
-        return (self.fkey(d), d)
+        return (self.fkey(self._format_key.format(d)), d)
 
     def new(self, **kwargs):
         # set the record
@@ -223,7 +263,8 @@ class Area(RecordAuto):
     def __init__(self):
         super().__init__(
             'area', 
-            ('description', 'channel', 'formatter')
+            ('description', 'channel', 'formatter'),
+            ('description', 'formatter',)
             )
         
 
@@ -233,6 +274,10 @@ class Config(Record):
             'config', 
             ('value',)
             )
+
+
+
+area=Area()
 
 
 """
@@ -261,12 +306,40 @@ print(config)
 
 area=Area()
 
-k=area.new(description="Area número 1", channel="otro channel", formatter="{}algo")
+
+for a in range(0, 9):
+    r=''.join(choice(ascii_uppercase) for i in range(12))
+    g=''.join(choice(ascii_uppercase) for i in range(12))
+    k=area.new( description=f"Area número {r}", 
+                channel=f"channel {a}", 
+                formatter=g
+    )
+
+# area.rebuilt_index()
+print('ordre natural')
+print(area)
+
+print('ordre formatter')
+print(area.get_tab(order='formatter'))
+
+print('ordre description')
+print(area.get_tab(order='description'))
+
+
+"""    
 logger.debug(k.description)
 k2=area.reset(11, description="Area cambiada")
 
 logger.debug(
     area.get(1233)
     )
+"""
 
+"""
+logger.debug('Antes rebuild')
 print(area)
+
+area.rebuilt_index()
+logger.debug('despues rebuilt')
+print(area)
+"""
