@@ -1,2 +1,2 @@
 # redis
-Python client for redis
+Python table for redis
