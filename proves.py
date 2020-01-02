@@ -9,18 +9,33 @@ from string import ascii_uppercase
 
 red=redis.Redis(
     host='localhost',
-    decode_responses=True
+    decode_responses=True # decode all to utf-8
 )
  
 class Base:
+    """
+    Handles a Redis *table*. 
+    ------------------------
+    This class tries to mimic a table to work with redis
 
+    It has the following characteristics:    
+    - Easy field access by dot syntax (using a named tuple).
+    - The key is always name *id*.
+    - Autoformats the key.
+    - Maintains a direct and a reverse index for each indexed field.
+    - Output table format by [tablib](https://github.com/jazzband/tablib). We can view/save in various formats.
+    - Find out a record by its key with *get*
+    - Filter a table by its fields with *filter*
+    """
     def __init__(self, 
                  name='table',
                  fields=(),
                  indexes=()): 
         """ Base for records
+            -----------------
             :name: the name of the 'table'
             :fields: tuple with field names used in get
+            :indexes: tuple with fields that are indexes
         """                
         super().__init__()    
         self._name=name
@@ -36,6 +51,18 @@ class Base:
         self._indexes=indexes
 
     def fkey(self, k):
+        """ 
+        Formats the key for this record.
+        --------------------------------
+        The key is always formad by the name of the *table* plus the key value 
+        The standar separator is the **:** character
+
+        Parameters:
+            :k: the key of the record
+
+        Returns:
+            - table_name:key
+        """
         # return name:k
         # logger.debug(f'formating key {k}')
         k=str(k)
@@ -57,7 +84,8 @@ class Base:
         return True
 
     def make_record(self, record):
-        """ makes and returns a namedtuple with the record 
+        """ Makes and returns a namedtuple with the record 
+            ----------------------------------------------
             it should be overriden if additional logic or formatting was need
             :record: the record given by redis
             :return: the named tuple
@@ -81,10 +109,14 @@ class Base:
             return '-1' 
 
     def get(self, key):
-        """ get the record
-            :key: the key to find out
-            :return: a namedtuple with record or None
+        """ Get the record with key *key*
+            -----------------------------
+            Parameters:            
+            - :key: the key to find out
+            Return:
+            - :return: a namedtuple with record or None if the record does not exist
         """
+        tini=datetime.now()
         #logger.debug(f'key is {key} and fkey is {self.fkey(key)}')
         rec=red.hmget(self.fkey(key), self._fields)
         # check if all fields are None
@@ -92,11 +124,25 @@ class Base:
         if self.all_none(rec):
             # logger.debug(f"{key} is None")
             return None
-        rec[0]=self.fkey(key)
+        # take the key part only, not the table name
+        rec[0]=self.fkey(key).split(':')[1]
+        logger.debug(f'Record retrieved in {datetime.now()-tini}')
         #logger.debug(f'record is {dir(self._record)}')        
         return self.make_record(rec)
 
     def filter(self, match='*', order='id'):
+        """"
+        Filters a dataset
+        -----------------
+        Returns all *records* that match *match* in order *order*. 
+        It uses a redis [pipeline](https://redis.io/topics/pipelining).
+
+        Parameters:
+        - :match: the matching string
+        - :order: the field to order the results
+        Return:
+        - :dataset: The filtered result ordered by *order* or None
+        """
         # return a bunch of records
         tini=datetime.now()
         dataset=[]
@@ -125,6 +171,7 @@ class Base:
             h[0]=claus[a]                        
             dataset.append(self.make_record(h))
             a+=1
+        # log time recovery statistics
         logger.debug(f'{len(dataset)} records in {datetime.now()-tini}')
         return dataset        
 
@@ -137,7 +184,10 @@ class Base:
         return tab
 
     def _new(self, key, kwargs):
-        """ insert or reset a record (call only from new) 
+        """ 
+            Insert or reset a record (call only from new) 
+            ---------------------------------------------
+            Maintains the indexes
         """
         red.hmset(key, kwargs)
         # make indexes...
@@ -159,6 +209,11 @@ class Base:
 
 
     def rebuilt_index(self):
+        """
+            Rebuilds the indexes in the case of a change in fields
+            ------------------------------------------------------
+            Must be called each time we change the list of indexes
+        """
         # delete indices
         for i in self._indexes:
             iname=f'{self._name}.{i}.index'
@@ -184,11 +239,15 @@ class Base:
                 red.zadd(iname, { f"{v}:{self.get_cardinal(s)}":0 })
 
     def __str__(self):
-        # print all records
+        # print all records in tabular fashion
         return f"----- {self._name} ------\n{self.get_tab()}"        
 
-class Record(Base):
-    # not auto incremental, we provide the key
+class Table(Base):
+    """ A table with non incremental key
+        --------------------------------
+
+        We provide the key with each record
+    """
 
     def __init__(self, name, fields, indexes=()):                 
         super().__init__(name, fields, indexes)        
@@ -221,8 +280,12 @@ class Record(Base):
         return red.set(key, **kwargs)
 
 
-class RecordAuto(Base):
-    # autoincremental table
+class AutoTable(Base):
+    """
+        An autoincremental table
+        ------------------------
+        The key is incremented monotonically
+    """
 
     def __init__(self, name, fields, indexes=()):
         super().__init__(name, fields, indexes)        
@@ -258,8 +321,13 @@ class RecordAuto(Base):
         return key
 
 
-class Area(RecordAuto):
+class Area(AutoTable):
+    """
+        A test table Area with autoincremental key
+        ------------------------------------------
+        It has three fields, two indexes
 
+    """
     def __init__(self):
         super().__init__(
             'area', 
@@ -268,7 +336,11 @@ class Area(RecordAuto):
             )
         
 
-class Config(Record):
+class Config(Table):
+    """
+        A test table without autoincremental key
+        ---------------------------------------- 
+    """
     def __init__(self):
          super().__init__(
             'config', 
@@ -278,6 +350,42 @@ class Config(Record):
 
 
 area=Area()
+
+config=Config() # create table Config
+config.new('user.name', value='pepito')   # append or update record with key `user.name`
+config.new('user.email', value='pepito@blahblah') # append or update record with key `user.email`
+
+#for r in config.filter():
+#    print(r.id, r.value) 
+#print(config.get_tab(match='*'))
+
+# get record by key
+#print(config.get('user.name'))    
+
+print(config.filter(match='user2.*'))
+
+exit(0)
+
+area=Area() # create table Area
+
+# create some records 
+for a in range(0, 9):
+    r=''.join(choice(ascii_uppercase) for i in range(12))
+    g=''.join(choice(ascii_uppercase) for i in range(12))
+    k=area.new( description=f"Area número {r}", 
+                channel=f"channel {a}", 
+                formatter=g
+    )
+
+# area.rebuilt_index()
+print('ordre natural')
+print(area)
+
+print('ordre formatter')
+print(area.get_tab(order='formatter'))
+
+print('ordre description')
+print(area.get_tab(order='description'))
 
 
 """
@@ -298,32 +406,6 @@ for t in r:
 
 exit(0)
 """
-config=Config()
-config.new('user.name', value='pepito')
-config.new('user.email', value='pepito@blahblah')
-
-print(config)
-
-area=Area()
-
-
-for a in range(0, 9):
-    r=''.join(choice(ascii_uppercase) for i in range(12))
-    g=''.join(choice(ascii_uppercase) for i in range(12))
-    k=area.new( description=f"Area número {r}", 
-                channel=f"channel {a}", 
-                formatter=g
-    )
-
-# area.rebuilt_index()
-print('ordre natural')
-print(area)
-
-print('ordre formatter')
-print(area.get_tab(order='formatter'))
-
-print('ordre description')
-print(area.get_tab(order='description'))
 
 
 """    
