@@ -1,17 +1,141 @@
 import redis
-from loguru import logger
 from datetime import datetime
+from collections.abc import MutableMapping
+import random
+import string
+from time import time
+
+
+DELIM=':'
+
+
+r=redis.Redis(
+    host='localhost',
+    decode_responses=True # decode all to utf-8
+)
+
+import datetime
+today = str(datetime.date.today())
+print(f"today is {today}")
+
+visitors = {"dan", "jon", "alex"}
+r.sadd(today, *visitors)
+print(f"Today {today} members ({r.scard(today)}) are {r.smembers(today)}")
+
+
+restaurant = {
+    "name": "Ravagh",
+    "type": "Persian",
+    "address": {
+        "street": {
+            "line1": "11 E 30th St",
+            "line2": "APT 1",
+        },
+        "city": "New York",
+        "state": "NY",
+        "zip": 10016,
+    }
+}
+
+
+persona = {
+    "id": "41447781X",
+    "nombre": "Pere",
+    "apellidos": "Vilás",
+    "fecha_nacimiento": today
+}
+
+
+def count_elapsed_time(f):
+    def wrapper():
+        # Start counting.
+        start_time = time()
+        # Take the original function's return value.
+        ret = f()
+        # Calculate the elapsed time.
+        elapsed_time = time() - start_time
+        print("Elapsed time: %0.10f seconds." % elapsed_time)
+        return ret
+    
+    return wrapper
+
+def id_generator(size=24, chars=string.ascii_uppercase + string.digits):    
+    return ''.join(random.choice(chars) for _ in range(size))
+
+
+def save(r: redis.Redis, prefix:str, obj:dict)->str:        
+    if obj.get('id', None) is None:
+        obj['id']=id_generator()
+
+    r.sadd(f'{prefix}_KEYS', obj['id'])
+
+    r.hset(f"{prefix}:{obj['id']}", mapping=obj)
+
+    return obj.get('id')
+
+def get(r: redis.Redis, prefix:str='', id:str='')->dict:        
+    return(r.hgetall(f"{prefix}:{id}"))
+
+    
+def get_all(r: redis.Redis, prefix:str='', start=0, num=10)->list:
+    start_time = time()
+    t=[]
+    # k is the id
+    for k in r.sort(f'{prefix}_KEYS', start=start, num=num, alpha=True, desc=False):
+        pass
+        #g=r.hgetall(f"{prefix}:{k}")
+        #t.append(r.hgetall(f"{prefix}:{k}"))
+    elapsed_time = time() - start_time
+    print("get_all time: %0.10f seconds." % elapsed_time)
+    return t
+
+
+@count_elapsed_time
+def haz():
+    start_time = time()
+    for a in range(0, 100000):
+        persona['id']=f'id{a}'
+        persona['nombre']=f'Pepe{a}'
+        save(r, 'PERSONA', persona)
+    elapsed_time = time() - start_time
+    print("Creation time: %0.10f seconds." % elapsed_time)
+
+
+
+random.seed(444)
+
+
+# esborram base de dades
+#r.flushdb()
+#haz()
+print(f"Number of keys is {r.dbsize()}")
+
+start_time = time()
+print(get(r, 'PERSONA', 'id1095'))
+elapsed_time = time() - start_time
+print("id search time: %0.10f seconds." % elapsed_time)
+
+print(len(get_all(r, 'PERSONA', num=10)))
+
+
+exit(0)
+# print(get_record_id(r, 'PERSONA', 'id99'))
+g=get_table(r, 'PERSONA', fields=('nombre',), start=100)
+for a in range(10):
+    print(g[a])
+print(len(g))
+
+
+
+exit(0)
+
+from loguru import logger
 from collections import namedtuple
 import tablib
 from random import choice
 from string import ascii_uppercase
 
 
-red=redis.Redis(
-    host='localhost',
-    decode_responses=True # decode all to utf-8
-)
- 
 class Base:
     """
     Handles a Redis *table*. 
