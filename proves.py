@@ -4,7 +4,7 @@ from collections.abc import MutableMapping
 import random
 import string
 from time import time
-
+import binascii
 
 DELIM=':'
 
@@ -22,29 +22,12 @@ visitors = {"dan", "jon", "alex"}
 r.sadd(today, *visitors)
 print(f"Today {today} members ({r.scard(today)}) are {r.smembers(today)}")
 
-
-restaurant = {
-    "name": "Ravagh",
-    "type": "Persian",
-    "address": {
-        "street": {
-            "line1": "11 E 30th St",
-            "line2": "APT 1",
-        },
-        "city": "New York",
-        "state": "NY",
-        "zip": 10016,
-    }
-}
-
-
 persona = {
     "id": "41447781X",
     "nombre": "Pere",
     "apellidos": "Vilás",
     "fecha_nacimiento": today
 }
-
 
 def count_elapsed_time(f):
     def wrapper():
@@ -62,13 +45,26 @@ def count_elapsed_time(f):
 def id_generator(size=24, chars=string.ascii_uppercase + string.digits):    
     return ''.join(random.choice(chars) for _ in range(size))
 
+def str_to_int(val:str)->int:
+    return int(binascii.hexlify(val.encode('utf-8')), 16)
 
-def save(r: redis.Redis, prefix:str, obj:dict)->str:        
+def save(r: redis.Redis, prefix:str, obj:dict, indexes=())->str:        
+    # si no hi ha camp d'index, el cream i el popul
     if obj.get('id', None) is None:
         obj['id']=id_generator()
 
-    r.sadd(f'{prefix}_KEYS', obj['id'])
+    # com a mínim, salvam l'ordre de l'index
+    r.sadd(f'{prefix}_ID', obj['id'])
 
+    # salvam també els altres index
+    # el primer camp és el nom de l'index,
+    # el segon és el valor (score)
+    # el tercer és l'id de l'objecte
+    for i in indexes:        
+        r.execute_command('ZADD', f'{prefix}_{i.upper()}_INDEX', 'nx', str_to_int(obj.get(i, '')), obj['id'])
+        #r.zadd(f'{prefix}_{i.upper()}_INDEX', {obj['id']:obj.get(i, '')})
+
+    # salvam el diccionari
     r.hset(f"{prefix}:{obj['id']}", mapping=obj)
 
     return obj.get('id')
@@ -77,17 +73,17 @@ def get(r: redis.Redis, prefix:str='', id:str='')->dict:
     return(r.hgetall(f"{prefix}:{id}"))
 
     
-def get_all(r: redis.Redis, prefix:str='', start=0, num=10)->list:
+def get_all(r: redis.Redis, prefix:str='', start=0, num=10, order='ID')->list:
     start_time = time()
     t=[]
     # k is the id
-    for k in r.sort(f'{prefix}_KEYS', start=start, num=num, alpha=True, desc=False):
-        pass
-        #g=r.hgetall(f"{prefix}:{k}")
-        #t.append(r.hgetall(f"{prefix}:{k}"))
+    for k in r.sort(f'{prefix}_{order}', start=start, num=num, alpha=True, desc=False):        
+        # g=r.hgetall(f"{prefix}:{k}")
+        t.append(r.hgetall(f"{prefix}:{k}"))
     elapsed_time = time() - start_time
     print("get_all time: %0.10f seconds." % elapsed_time)
     return t
+
 
 
 @count_elapsed_time
@@ -96,7 +92,7 @@ def haz():
     for a in range(0, 100000):
         persona['id']=f'id{a}'
         persona['nombre']=f'Pepe{a}'
-        save(r, 'PERSONA', persona)
+        save(r, 'PERSONA', persona, indexes=('nombre',))
     elapsed_time = time() - start_time
     print("Creation time: %0.10f seconds." % elapsed_time)
 
@@ -111,14 +107,33 @@ random.seed(444)
 print(f"Number of keys is {r.dbsize()}")
 
 start_time = time()
-print(get(r, 'PERSONA', 'id1095'))
+# print(get(r, 'PERSONA', 'id1095'))
+g=[]
+# filtrar tots els que el seu nom comenci per Pepe44
+for k in r.sort(f'PERSONA_NOMBRE_INDEX',  alpha=True, desc=False):        
+    t=r.hgetall(f"PERSONA:{k}")
+    if t['nombre'].startswith("Pepe44"):
+        g.append(t)
 elapsed_time = time() - start_time
-print("id search time: %0.10f seconds." % elapsed_time)
+print("search time: %0.10f seconds." % elapsed_time)
+print(len(g))
+print(g)
 
-print(len(get_all(r, 'PERSONA', num=10)))
 
+"""
+l=get_all(r, 'PERSONA', start=3456, num=100)
+print(len(l))
+print(l)
+"""
 
 exit(0)
+
+
+
+
+
+
+
 # print(get_record_id(r, 'PERSONA', 'id99'))
 g=get_table(r, 'PERSONA', fields=('nombre',), start=100)
 for a in range(10):
