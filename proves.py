@@ -54,18 +54,18 @@ def save(r: redis.Redis, prefix:str, obj:dict, indexes=())->str:
         obj['id']=id_generator()
 
     # com a mínim, salvam l'ordre de l'index
-    r.sadd(f'{prefix}_ID', obj['id'])
+    r.sadd(f'{prefix.upper()}_ID', obj['id'])
 
     # salvam també els altres index
     # el primer camp és el nom de l'index,
     # el segon és el valor (score)
     # el tercer és l'id de l'objecte
     for i in indexes:        
-        r.execute_command('ZADD', f'{prefix}_{i.upper()}_INDEX', 'nx', str_to_int(obj.get(i, '')), obj['id'])
+        r.execute_command('ZADD', f'{prefix.upper()}_{i.upper()}_INDEX', 0, f"{obj[i]}:{obj['id']}".upper())
         #r.zadd(f'{prefix}_{i.upper()}_INDEX', {obj['id']:obj.get(i, '')})
 
     # salvam el diccionari
-    r.hset(f"{prefix}:{obj['id']}", mapping=obj)
+    r.hmset(f"{prefix.upper()}:{obj['id']}", mapping=obj)
 
     return obj.get('id')
 
@@ -100,11 +100,18 @@ def haz():
 
 random.seed(444)
 
+# redis-10052.c135.eu-central-1-1.ec2.cloud.redislabs.com:10052
+# 95Cb5QMnPHCFN2MXzVhuZhBAbrsGy77h
+# #1322430 Essentials/AWS/eu-central-1/Cache/30MB
+
+# ZRANGEBYLEX PERSONA_NOMBRE_INDEX "[PEPE" "[PEPE\xff" limit 98765 99001
 
 # esborram base de dades
 #r.flushdb()
 #haz()
 print(f"Number of keys is {r.dbsize()}")
+
+#exit(0)
 
 start_time = time()
 # print(get(r, 'PERSONA', 'id1095'))
