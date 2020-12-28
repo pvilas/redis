@@ -107,8 +107,26 @@ random.seed(444)
 # src/redis-cli -h redis-10052.c135.eu-central-1-1.ec2.cloud.redislabs.com -p 10052 -a 95Cb5QMnPHCFN2MXzVhuZhBAbrsGy77h
 
 """
+Instalar redis
+
+brew install redis
+
+
+Per compilar redisearch
 
 https://docs.deistercloud.com/content/Databases.30/Redis/index.xml?embedded=true&navbar=0&param-iframe=index-iframe#589232e85dfa26f2270fee313efa40b5
+
+
+I afeixir es loadmodule redisearch.so a /usr/local/etc/redis.conf
+
+Arrancar redis 
+
+brew service start redis
+
+Per veure si s'ha carregat es mòdul
+
+redis-cli module list
+
 
 
 Possible conflicting files are:
