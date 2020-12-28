@@ -104,6 +104,23 @@ random.seed(444)
 # 95Cb5QMnPHCFN2MXzVhuZhBAbrsGy77h
 # #1322430 Essentials/AWS/eu-central-1/Cache/30MB
 
+# src/redis-cli -h redis-10052.c135.eu-central-1-1.ec2.cloud.redislabs.com -p 10052 -a 95Cb5QMnPHCFN2MXzVhuZhBAbrsGy77h
+
+"""
+
+https://docs.deistercloud.com/content/Databases.30/Redis/index.xml?embedded=true&navbar=0&param-iframe=index-iframe#589232e85dfa26f2270fee313efa40b5
+
+
+Possible conflicting files are:
+/usr/local/bin/redis-cli
+/usr/local/bin/redis-server
+==> Caveats
+To have launchd start redis now and restart at login:
+  brew services start redis
+Or, if you don't want/need a background service you can just run:
+  redis-server /usr/local/etc/redis.conf
+
+"""
 # ZRANGEBYLEX PERSONA_NOMBRE_INDEX "[PEPE" "[PEPE\xff" limit 98765 99001
 
 # esborram base de dades
