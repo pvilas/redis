@@ -100,12 +100,6 @@ def haz():
 
 random.seed(444)
 
-# redis-10052.c135.eu-central-1-1.ec2.cloud.redislabs.com:10052
-# 95Cb5QMnPHCFN2MXzVhuZhBAbrsGy77h
-# #1322430 Essentials/AWS/eu-central-1/Cache/30MB
-
-# src/redis-cli -h redis-10052.c135.eu-central-1-1.ec2.cloud.redislabs.com -p 10052 -a 95Cb5QMnPHCFN2MXzVhuZhBAbrsGy77h
-
 """
 Instalar redis
 
