@@ -168,7 +168,7 @@ https://github.com/RediSearch/redisearch-getting-started
 # ZRANGEBYLEX PERSONA_NOMBRE_INDEX "[PEPE" "[PEPE\xff" limit 98765 99001
 
 
-idx_persona=Client("idx:PERSONA", conn=r)
+idx_persona=Client("idx:persona", conn=r)
 
 
 # esborram base de dades
