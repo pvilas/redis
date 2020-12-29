@@ -5,8 +5,17 @@ import random
 import string
 from time import time
 import binascii
+from redisearch import Client, TextField, IndexDefinition, Query
+import arrow
 
 DELIM=':'
+
+
+def now()->str:
+    return str(arrow.utcnow().to('local'))
+
+def today()->str:
+    return str(arrow.utcnow().format('YYY-MM-DD'))
 
 
 r=redis.Redis(
@@ -14,6 +23,7 @@ r=redis.Redis(
     decode_responses=True # decode all to utf-8
 )
 
+"""
 import datetime
 today = str(datetime.date.today())
 print(f"today is {today}")
@@ -21,13 +31,7 @@ print(f"today is {today}")
 visitors = {"dan", "jon", "alex"}
 r.sadd(today, *visitors)
 print(f"Today {today} members ({r.scard(today)}) are {r.smembers(today)}")
-
-persona = {
-    "id": "41447781X",
-    "nombre": "Pere",
-    "apellidos": "Vilás",
-    "fecha_nacimiento": today
-}
+"""
 
 def count_elapsed_time(f):
     def wrapper():
@@ -48,51 +52,52 @@ def id_generator(size=24, chars=string.ascii_uppercase + string.digits):
 def str_to_int(val:str)->int:
     return int(binascii.hexlify(val.encode('utf-8')), 16)
 
-def save(r: redis.Redis, prefix:str, obj:dict, indexes=())->str:        
-    # si no hi ha camp d'index, el cream i el popul
-    if obj.get('id', None) is None:
-        obj['id']=id_generator()
+def key_sanitize(s:str)->str:
+    l=[]
+    for i in s:
+        if i in set(string.ascii_letters + string.digits):
+            l.append(i)
+    return ''.join(l).upper()
 
-    # com a mínim, salvam l'ordre de l'index
-    r.sadd(f'{prefix.upper()}_ID', obj['id'])
+def save(r: redis.Redis, prefix:str, obj:dict)->str:            
+    # si no hi ha camp d'index, el cream i el populam
+    if obj.get('id', None) is None: 
+        # el nom de sa clau acaba en _KEY
+        NOM_COMPTADOR=f"{prefix.upper()}_KEY"        
+        # miram si està el comptador de ids
+        n=r.get(NOM_COMPTADOR)
+        # print(f"compatdor es {NOM_COMPTADOR} = {n}")
+        if n is None:
+            r.set(NOM_COMPTADOR, 1)
+            n=1      
+        # print(f"n = {n}")              
+        obj['id']=f'{n}'.rjust(8, '0') #f'{n:08}'
+        r.incr(NOM_COMPTADOR)
+    else: # si hi ha camp d'index, el sanitizam
+        obj['id']=key_sanitize(obj['id'])
+    
+    # si no hi ha camp de creacio, el cream i el populam
+    if obj.get('created_on', None) is None:
+        obj['created_on']=now()
+    
+    # el camp updated_on el populam sempre
+    obj['updated_on']=now()
 
-    # salvam també els altres index
-    # el primer camp és el nom de l'index,
-    # el segon és el valor (score)
-    # el tercer és l'id de l'objecte
-    for i in indexes:        
-        r.execute_command('ZADD', f'{prefix.upper()}_{i.upper()}_INDEX', 0, f"{obj[i]}:{obj['id']}".upper())
-        #r.zadd(f'{prefix}_{i.upper()}_INDEX', {obj['id']:obj.get(i, '')})
+    # cream la clau
+    NOM_CLAU = f"{prefix.upper()}:{obj['id']}"
+    # print(f"La clau es {NOM_CLAU}")
 
     # salvam el diccionari
-    r.hmset(f"{prefix.upper()}:{obj['id']}", mapping=obj)
+    r.hset(NOM_CLAU, mapping=obj)
 
-    return obj.get('id')
-
-def get(r: redis.Redis, prefix:str='', id:str='')->dict:        
-    return(r.hgetall(f"{prefix}:{id}"))
-
-    
-def get_all(r: redis.Redis, prefix:str='', start=0, num=10, order='ID')->list:
-    start_time = time()
-    t=[]
-    # k is the id
-    for k in r.sort(f'{prefix}_{order}', start=start, num=num, alpha=True, desc=False):        
-        # g=r.hgetall(f"{prefix}:{k}")
-        t.append(r.hgetall(f"{prefix}:{k}"))
-    elapsed_time = time() - start_time
-    print("get_all time: %0.10f seconds." % elapsed_time)
-    return t
-
-
+    return NOM_CLAU
 
 @count_elapsed_time
-def haz():
+def haz(r):
     start_time = time()
-    for a in range(0, 100000):
-        persona['id']=f'id{a}'
-        persona['nombre']=f'Pepe{a}'
-        save(r, 'PERSONA', persona, indexes=('nombre',))
+    for a in range(0, 10):
+        persona=dict(dni=f'41{a}', nombre=f'Pepe {a} illo', apellidos=id_generator())  
+        save(r, 'PERSONA', persona)
     elapsed_time = time() - start_time
     print("Creation time: %0.10f seconds." % elapsed_time)
 
@@ -111,15 +116,37 @@ Per compilar redisearch
 https://docs.deistercloud.com/content/Databases.30/Redis/index.xml?embedded=true&navbar=0&param-iframe=index-iframe#589232e85dfa26f2270fee313efa40b5
 
 
-I afeixir es loadmodule redisearch.so a /usr/local/etc/redis.conf
+brew install cmake
+cd $HOME/src
+git clone --recursive https://github.com/RediSearch/RediSearch.git 
+cd RediSearch
+make
+
+### Copiar el mòdul complilat a /usr/local/etc
+
+```cp build/redisearch.so /usr/local/etc```
+
+I afeixir es loadmodule build/redisearch.so a /usr/local/etc/redis.conf
+
+
+```echo "loadmodule /usr/local/etc/redisearch.so" >> /usr/local/etc/redis.conf```
 
 Arrancar redis 
 
-brew service start redis
+```brew services start redis```
 
-Per veure si s'ha carregat es mòdul
+Per veure si s'ha carregat es mòdul search
 
 redis-cli module list
+
+
+
+
+To have launchd start redis now and restart at login:
+  brew services start redis
+Or, if you don't want/need a background service you can just run:
+  redis-server /usr/local/etc/redis.conf
+==> Summary
 
 
 
@@ -132,15 +159,41 @@ To have launchd start redis now and restart at login:
 Or, if you don't want/need a background service you can just run:
   redis-server /usr/local/etc/redis.conf
 
+
+Tutorial
+https://github.com/RediSearch/redisearch-getting-started
+
+
 """
 # ZRANGEBYLEX PERSONA_NOMBRE_INDEX "[PEPE" "[PEPE\xff" limit 98765 99001
 
+
+idx_persona=Client("idx:PERSONA", conn=r)
+
+
 # esborram base de dades
-#r.flushdb()
-#haz()
+r.flushdb()
+"""
+# cream index damunt persona
+client.create_index(
+    (TextField('id', sortable=True), 
+     TextField('dni', sortable=True), 
+     TextField('nombre', sortable=True), 
+     TextField('apellidos', sortable=True)), 
+    definition=IndexDefinition(prefix=['PERSONA:']))
+"""
+
+start_time = time()
+for a in range(0, 100000):
+    persona=dict(dni=f'41{a}', nombre=f'Pepe {a} illo', apellidos=id_generator())  
+    save(r, 'PERSONA', persona)
+elapsed_time = time() - start_time
+print("Creation time: %0.10f seconds." % elapsed_time)
+
+
 print(f"Number of keys is {r.dbsize()}")
 
-#exit(0)
+exit(0)
 
 start_time = time()
 # print(get(r, 'PERSONA', 'id1095'))
