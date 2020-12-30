@@ -7,21 +7,145 @@ from time import time
 import binascii
 from redisearch import Client, TextField, IndexDefinition, Query
 import arrow
-
-DELIM=':'
-
-
-def now()->str:
-    return str(arrow.utcnow().to('local'))
-
-def today()->str:
-    return str(arrow.utcnow().format('YYY-MM-DD'))
-
+from loguru import logger
 
 r=redis.Redis(
     host='localhost',
     decode_responses=True # decode all to utf-8
 )
+r.flushdb()
+
+class rTaula(object):
+
+    def __init__(self, conn, prefix:str, idx_definition=()):
+        """
+            conn - sa connexió amb redis
+            prefix - el nom de sa taula, passarà a majúscules, sense els dos punts
+            idx_fields - llistat amb parell de (nom, tipus)
+                        p.e.
+                        (TextField('id', sortable=True), 
+                        TextField('dni', sortable=True), 
+                        TextField('nombre', sortable=True), 
+                        TextField('apellidos', sortable=True)), 
+        """
+        self.r=conn
+        self.prefix=prefix.upper()
+        self.idx=Client(f"idx:{self.prefix}", conn=conn)
+        
+        # cream index damunt la taula, p.e. PERSONA:
+        self.idx.create_index(
+            idx_definition,
+            definition=IndexDefinition(prefix=[f'{self.prefix}:']))
+
+    def key_sanitize(self, s:str)->str:
+        l=[]
+        for i in s:
+            if i in set(string.ascii_letters + string.digits):
+                l.append(i)
+        return ''.join(l).upper()
+
+    def now(self)->str:
+        return str(arrow.utcnow().to('local'))
+
+    def today(self)->str:
+        return str(arrow.utcnow().format('YYY-MM-DD'))
+
+    def before_save(self, obj:dict)->dict:
+        """ Check, sanitize, etc... 
+            Raise Exception on error
+            ## Param            
+            * obj - The dict to be saved, before perform the checkin
+
+            ## Return            
+            The checked, sanitized obj
+        """
+        return obj
+
+    def after_save(self, obj:dict, id: str) -> None:
+        """ Do tasks after save
+            ## Param 
+            * obj - the saved dict
+            * id  - the id of the saved obj
+        """
+        return None
+
+
+
+    def save(self, obj:dict)->str:            
+        try:
+            # call before_save, can raise an exception
+            obj=self.before_save(obj)        
+            # si no hi ha camp d'index, el cream i el populam
+            if obj.get('id', None) is None: 
+                # el nom de sa clau acaba en _KEY
+                NOM_COMPTADOR=f"{self.prefix.upper()}_KEY"        
+                # miram si està el comptador de ids
+                n=self.r.get(NOM_COMPTADOR)
+                # print(f"compatdor es {NOM_COMPTADOR} = {n}")
+                if n is None:
+                    self.r.set(NOM_COMPTADOR, 1)
+                    n=1      
+                # print(f"n = {n}")              
+                obj['id']=f'{n}'.rjust(8, '0') #f'{n:08}'
+                self.r.incr(NOM_COMPTADOR)
+            else: # si hi ha camp d'index, el sanitizam
+                obj['id']=self.key_sanitize(obj['id'])
+            
+            # si no hi ha camp de creacio, el cream i el populam
+            if obj.get('created_on', None) is None:
+                obj['created_on']=self.now()
+            
+            # el camp updated_on el populam sempre
+            obj['updated_on']=self.now()
+
+            # cream la clau
+            NOM_CLAU = f"{self.prefix.upper()}:{obj['id']}"
+            # print(f"La clau es {NOM_CLAU}")
+
+            # salvam el diccionari
+            self.idx.redis.hset(NOM_CLAU, mapping=obj)
+
+            # cridam after save
+            self.after_save(obj, NOM_CLAU)
+
+            return NOM_CLAU
+        except Exception as ex:
+            logger.error(f"Database error while saving: {ex}")
+            return None
+
+    def id_generator(self, size=24, chars=string.ascii_uppercase + string.digits):    
+        """ return a uuid string """
+        random.seed(444)
+        return ''.join(random.choice(chars) for _ in range(size))
+
+    def search(self, query:str, start:int=0, num:int=10)->list:
+        """ perform a query with the index
+            ## Param
+            * query - is the string query
+            * start - page form record start
+            * num - number of records to include into the result
+            ## Return 
+            A list of records
+        """
+        q=Query(query).paging(start, num)
+        return self.idx.search(q)
+
+
+persona=rTaula(r, 'PERSONA', 
+    idx_definition= (                
+                TextField('dni', sortable=True), 
+                TextField('nombre', sortable=True), 
+                TextField('apellidos', sortable=True)))
+
+print(persona.save(dict( nombre="Pere", apellidos="Vilás Marí", dni="41447781X")))
+print(persona.save(dict( nombre="Manuel", apellidos="Guijarro Pulido", dni="41d47781X")))
+print(persona.save(dict( nombre="Antonio", apellidos="Moreno Carmona", dni="41ss447781X")))
+print(persona.save(dict( nombre="Pere", apellidos="Moreno Marí", dni="41d447781X")))
+
+for p in persona.search("Vilás*").docs:
+    print(p.nombre, p.apellidos)
+
+exit(0)
 
 """
 import datetime
