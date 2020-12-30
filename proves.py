@@ -13,7 +13,7 @@ r=redis.Redis(
     host='localhost',
     decode_responses=True # decode all to utf-8
 )
-r.flushdb()
+#r.flushdb()
 
 class rTaula(object):
 
@@ -33,9 +33,13 @@ class rTaula(object):
         self.idx=Client(f"idx:{self.prefix}", conn=conn)
         
         # cream index damunt la taula, p.e. PERSONA:
-        self.idx.create_index(
-            idx_definition,
-            definition=IndexDefinition(prefix=[f'{self.prefix}:']))
+        # saltarà excepció si ja existeix
+        try:
+            self.idx.create_index(
+                idx_definition,
+                definition=IndexDefinition(prefix=[f'{self.prefix}:']))
+        except Exception as ex:
+            pass
 
     def key_sanitize(self, s:str)->str:
         l=[]
@@ -118,7 +122,7 @@ class rTaula(object):
         random.seed(444)
         return ''.join(random.choice(chars) for _ in range(size))
 
-    def search(self, query:str, start:int=0, num:int=10)->list:
+    def search(self, query:str, start:int=0, num:int=10, sort_by:str='id', direction:bool=True)->list:
         """ perform a query with the index
             ## Param
             * query - is the string query
@@ -127,22 +131,24 @@ class rTaula(object):
             ## Return 
             A list of records
         """
-        q=Query(query).paging(start, num)
+        q=Query(query).sort_by(sort_by, direction).paging(start, num)
         return self.idx.search(q)
 
 
 persona=rTaula(r, 'PERSONA', 
-    idx_definition= (                
+    idx_definition= (                                
+                TextField('id', sortable=True), 
                 TextField('dni', sortable=True), 
                 TextField('nombre', sortable=True), 
                 TextField('apellidos', sortable=True)))
-
+"""
 print(persona.save(dict( nombre="Pere", apellidos="Vilás Marí", dni="41447781X")))
 print(persona.save(dict( nombre="Manuel", apellidos="Guijarro Pulido", dni="41d47781X")))
 print(persona.save(dict( nombre="Antonio", apellidos="Moreno Carmona", dni="41ss447781X")))
 print(persona.save(dict( nombre="Pere", apellidos="Moreno Marí", dni="41d447781X")))
+"""
 
-for p in persona.search("Vilás*").docs:
+for p in persona.search("*", sort_by="apellidos").docs:
     print(p.nombre, p.apellidos)
 
 exit(0)
