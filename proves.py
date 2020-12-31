@@ -5,20 +5,65 @@ import random
 import string
 from time import time
 import binascii
-from redisearch import Client, TextField, IndexDefinition, Query
+from redisearch import Client, TextField, NumericField,\
+                        TextField as DateField, TextField as DatetimeField,\
+                        IndexDefinition, Query
 import arrow
 from loguru import logger
+from wtforms import Form, BooleanField, StringField, HiddenField, validators
+from werkzeug.datastructures import MultiDict
+import tablib
 
 r=redis.Redis(
     host='localhost',
     decode_responses=True # decode all to utf-8
 )
-#r.flushdb()
+r.flushdb()
 
-class rTaula(object):
+class rDocumentException(Exception):
+    def __init__(self, message="Error message", doc:dict={})->None:
+        logger.warning(f"rDocumentException ({type(self).__name__}) {doc.get('id', 'no_id')}: {message}. El documento era {doc}.")
+        super().__init__(message)
 
-    def __init__(self, conn, prefix:str, idx_definition=()):
+class rValidationException(rDocumentException):
+    pass
+
+class rSaveException(rDocumentException):
+    pass
+
+class rFKNotExists(rDocumentException):
+    pass
+
+class rDeleteException(rDocumentException):
+    pass
+
+class rDeleteFKException(rDocumentException):
+    pass
+
+class rBeforeSaveException(rDocumentException):
+    pass
+
+class rAfterSaveException(rDocumentException):
+    pass
+
+class rBeforeDeleteException(rDocumentException):
+    pass
+
+class rAfterDeleteException(rDocumentException):
+    pass
+
+class rSearchException(rDocumentException):
+    pass
+
+
+class rBaseDocument(object):
+    def __init__(self, db, prefix:str, idx_definition=()):
         """
+            # rBaseDocument
+            És un document de RediSearch però sense validació d'entrada, és a dir,
+            no es comprova l'input abans de gravar.
+
+            ## Param
             conn - sa connexió amb redis
             prefix - el nom de sa taula, passarà a majúscules, sense els dos punts
             idx_fields - llistat amb parell de (nom, tipus)
@@ -28,10 +73,13 @@ class rTaula(object):
                         TextField('nombre', sortable=True), 
                         TextField('apellidos', sortable=True)), 
         """
-        self.r=conn
+        self.db=db
         self.prefix=prefix.upper()
-        self.idx=Client(f"idx:{self.prefix}", conn=conn)
-        
+        self.idx=Client(f"idx:{self.prefix}", conn=db.r)
+
+        # a list of the foreign key to check before save a document
+        self.foreigns=[] 
+
         # cream index damunt la taula, p.e. PERSONA:
         # saltarà excepció si ja existeix
         try:
@@ -54,102 +102,330 @@ class rTaula(object):
     def today(self)->str:
         return str(arrow.utcnow().format('YYY-MM-DD'))
 
-    def before_save(self, obj:dict)->dict:
+    def validate_foreigns(self, doc:dict)->None:
+        """ Es crida abans de salvar. 
+            Els camps foreign han d'existir i la clau també.
+            ## Exceptions
+            rFKNotExists
+        """
+        for d, f in self.db.dependants:            
+            if d.prefix==self.prefix:
+                if doc.get(f.prefix.lower()) is None:
+                    raise rFKNotExists(f"El miembro {f.prefix.lower()} de {self.prefix} no existe en el docuento", doc)
+                if not self.db.r.exists(doc.get(f.prefix.lower())):
+                    raise rFKNotExists(f"El miembro {d.prefix}.{f.prefix.lower()}, con valor {doc.get(f.prefix.lower())}, no existe como clave foránea de {f.prefix.upper()}", doc)
+
+    def before_save(self, doc:dict)->dict:
         """ Check, sanitize, etc... 
             Raise Exception on error
             ## Param            
-            * obj - The dict to be saved, before perform the checkin
+            * doc - The dict to be saved, before perform the checkin
+
+            ## Exceptions
+            rBeforeSaveException
+            e.g. if doc.get('field_name') is None:
+                    raise rBeforeSaveException(f"field_name can not be None")
 
             ## Return            
-            The checked, sanitized obj
-        """
-        return obj
+            The checked, sanitized doc
+        """                
+        self.validate_foreigns(doc)
+        return doc        
 
-    def after_save(self, obj:dict, id: str) -> None:
+    def after_save(self, doc:dict, id: str) -> None:
         """ Do tasks after save
             ## Param 
-            * obj - the saved dict
-            * id  - the id of the saved obj
+            * doc - the saved dict
+            * id  - the id of the saved doc
+            ## Exceptions
+            rAfterSaveException
         """
         return None
 
-
-
-    def save(self, obj:dict)->str:            
+    def save(self, doc:dict)->str:            
         try:
-            # call before_save, can raise an exception
-            obj=self.before_save(obj)        
             # si no hi ha camp d'index, el cream i el populam
-            if obj.get('id', None) is None: 
+            if doc.get('id', None) is None: 
                 # el nom de sa clau acaba en _KEY
                 NOM_COMPTADOR=f"{self.prefix.upper()}_KEY"        
                 # miram si està el comptador de ids
-                n=self.r.get(NOM_COMPTADOR)
+                n=self.db.r.get(NOM_COMPTADOR)
                 # print(f"compatdor es {NOM_COMPTADOR} = {n}")
                 if n is None:
-                    self.r.set(NOM_COMPTADOR, 1)
+                    self.db.r.set(NOM_COMPTADOR, 1)
                     n=1      
                 # print(f"n = {n}")              
-                obj['id']=f'{n}'.rjust(8, '0') #f'{n:08}'
-                self.r.incr(NOM_COMPTADOR)
+                doc['id']=f'{n}'.rjust(8, '0') #f'{n:08}'
+                self.db.r.incr(NOM_COMPTADOR)
             else: # si hi ha camp d'index, el sanitizam
-                obj['id']=self.key_sanitize(obj['id'])
-            
+                doc['id']=self.key_sanitize(doc['id'])
+
+            # call before_save, can raise an exception
+            doc=self.before_save(doc)        
+
             # si no hi ha camp de creacio, el cream i el populam
-            if obj.get('created_on', None) is None:
-                obj['created_on']=self.now()
+            if doc.get('created_at', None) is None:
+                doc['created_at']=self.now()
             
             # el camp updated_on el populam sempre
-            obj['updated_on']=self.now()
+            doc['updated_at']=self.now()
 
             # cream la clau
-            NOM_CLAU = f"{self.prefix.upper()}:{obj['id']}"
+            NOM_CLAU = f"{self.prefix.upper()}:{doc['id']}"
             # print(f"La clau es {NOM_CLAU}")
 
             # salvam el diccionari
-            self.idx.redis.hset(NOM_CLAU, mapping=obj)
+            self.idx.redis.hset(NOM_CLAU, mapping=doc)
 
             # cridam after save
-            self.after_save(obj, NOM_CLAU)
+            self.after_save(doc, NOM_CLAU)
 
             return NOM_CLAU
         except Exception as ex:
-            logger.error(f"Database error while saving: {ex}")
-            return None
+            logger.error(f"Database error while saving doc id {doc.get('id')}: {ex}")
+            raise rSaveException(ex, doc)
+
+    def before_delete(self, id:str)->None:
+        """ check if we can delete this document 
+            At this stage, we can delete if this document is not the key of a foreign key
+            raise an Exception if not
+            ## Param
+            * id - is the complete id prefix:id
+            ## Exception
+            rBeforeDeleteException
+        """         
+        for d in self.db.dependants:
+            # dependants està organitzat com p.e. (PERSONA, PAIS)
+            # miram si la dependència s'aplica a aquest document
+            if (self.prefix==d[1].prefix): # volem esborrar un pais i persona en depén
+                print(f"{d[0].prefix} depén de {self.prefix}, comprovant si hi ha algun doc a {d[0].prefix} amb la clau {id}")
+                cad=f'@{d[1].prefix.lower()}:"{id}"'
+                print(f"La cadena de busqueda a {d[0].prefix} es {cad}")                
+                if d[0].search(cad).total>0:
+                    raise rDeleteFKException("No se puede borrar {id} de {self.prefix} porque hay documentos en {d[0].prefix} que tienen esta clave.", {"id":id})
+
+    def after_delete(self, id:str)->None:
+        """ Perform some action after deletion
+            ## Param
+            * id - the complete id prefix:id
+            * doc - the deleted document
+            ## rAfterDeleteException
+        """
+        pass
+
+    def delete(self, id:str)->None:
+        """ Remove a key from the hash.
+            before_delete can throw an Exception
+
+            ## Param
+            * id - the complete id prefix:id            
+
+            ## Exceptions
+            rDeleteException
+        """
+        self.before_delete(id)
+        try:
+            self.db.r.delete(id)
+        except Exception as ex:
+            raise rDeleteException(ex, {'id':id})
+        self.after_delete(id)        
 
     def id_generator(self, size=24, chars=string.ascii_uppercase + string.digits):    
         """ return a uuid string """
         random.seed(444)
         return ''.join(random.choice(chars) for _ in range(size))
 
-    def search(self, query:str, start:int=0, num:int=10, sort_by:str='id', direction:bool=True)->list:
+
+    def docs_to_dict(self, docs:list)->list:
+        """ transform docs in a list of dicts """
+        reslist = []
+        for doc in docs:            
+            fields = {}
+            for field in dir(doc):
+                if (field.startswith('__')):
+                    continue
+                fields.update({ field : getattr(doc, field) })            
+            reslist.append(fields)
+        return reslist
+
+    def search(self, query:str, start:int=0, num:int=10, sort_by:str='id', direction:bool=True, slop=0)->list:
         """ perform a query with the index
             ## Param
             * query - is the string query
             * start - page form record start
             * num - number of records to include into the result
+            * sort_by - field to order by, defaul: *id*
+            * direction - asc True desc False
+            * slop - number of non matched terms (Levensthein distance), default: *0*
+            ## Exception
+            rSearchException
             ## Return 
             A list of records
         """
-        q=Query(query).sort_by(sort_by, direction).paging(start, num)
-        return self.idx.search(q)
+        try:
+            q=Query(query).slop(slop).sort_by(sort_by, direction).paging(start, num)
+            return self.idx.search(q)
+        except Exception as ex:
+            raise rSearchException(str(ex), {'query':query})
+
+class rWTFDocument(rBaseDocument):
+    class AddForm(Form):
+        id = StringField('Id', [validators.Length(min=2, max=50), validators.InputRequired()]) 
+        description = StringField('Descripción', [validators.Length(max=50), validators.InputRequired()]) 
+         
+    class EditForm(AddForm):
+        id = HiddenField()        
+
+    class SearchForm(Form):
+        pass
+
+    def __init__(self, db, prefix:str, idx_definition=()):
+        """
+            # rWTFDocument
+            És un document de RediSearch amb validació de l'imput usant WTForms
+
+            AddForm, EditForm, DeleteForm, SearchForm són les fitxes per defecte per fer
+            les operacions. 
+
+            AddForm s'utilitza com a base per a les **validacions** de les dades.
+
+            ## Param
+            conn - sa connexió amb redis
+            prefix - el nom de sa taula, passarà a majúscules, sense els dos punts
+            idx_fields - llistat amb parell de (nom, tipus)
+                        p.e.
+                        (TextField('id', sortable=True), 
+                        TextField('dni', sortable=True), 
+                        TextField('nombre', sortable=True), 
+                        TextField('apellidos', sortable=True)), 
+        """
+        super().__init__(db, prefix, idx_definition)
+
+    def validate(self, doc:dict, use_form:Form=None)->dict:
+        """ validate the imput using an WTForm """
+        if not doc:
+            raise rBeforeSaveException('No puede validarse un documento nulo')
+
+        # create the addform with the doc
+        try:
+            form_obj=use_form or self.AddForm
+            form=form_obj(doc)
+            if form.validate():
+                doc=form.data
+                return doc
+            else:
+                raise rValidationException(f'Hay errores de validación: {form.errors}', doc)
+        except Exception as ex:
+            raise rBeforeSaveException(f"Error validando: {ex}", doc)
 
 
-persona=rTaula(r, 'PERSONA', 
-    idx_definition= (                                
+    def before_save(self, doc:dict)->dict:
+        """ 
+            Check imput by validating an wtform
+        
+            Check, sanitize, etc... 
+            Raise Exception on error
+            ## Param            
+            * doc - The dict to be saved, before perform the checkin
+
+            ## Exceptions
+            rBeforeSaveException
+            e.g. if doc.get('field_name') is None:
+                    raise rBeforeSaveException(f"field_name can not be None")
+
+            ## Return            
+            The checked, sanitized doc
+        """                
+        doc=super().before_save(doc)
+        return self.validate(MultiDict(doc))
+
+class rBasicDocument(rWTFDocument):    
+    def __init__(self, db, prefix):
+        """ a document with id and description """
+        super().__init__(db, prefix.upper(), 
+            idx_definition= (                                
+                TextField('id', sortable=True), 
+                TextField('description', sortable=True)))
+
+
+class Pais(rBasicDocument):
+    def __init__(self, db):
+        super().__init__(db, 'PAIS')
+
+class Persona(rWTFDocument):
+    class AddForm(Form):
+        id = StringField('ID', [validators.Length(min=3, max=50), validators.InputRequired()]) 
+        nombre = StringField('Nombre', [validators.Length(max=50), validators.InputRequired()]) 
+        apellidos = StringField('Apellidos', [validators.Length(max=50), validators.InputRequired()]) 
+        dni = StringField('Dni', [validators.Length(max=50), validators.InputRequired()]) 
+        pais = StringField('Pais', [validators.Length(max=50), validators.InputRequired()]) 
+
+    def __init__(self, db):
+        super().__init__(db, 'PERSONA', 
+            idx_definition= (                                
                 TextField('id', sortable=True), 
                 TextField('dni', sortable=True), 
                 TextField('nombre', sortable=True), 
-                TextField('apellidos', sortable=True)))
-"""
-print(persona.save(dict( nombre="Pere", apellidos="Vilás Marí", dni="41447781X")))
-print(persona.save(dict( nombre="Manuel", apellidos="Guijarro Pulido", dni="41d47781X")))
-print(persona.save(dict( nombre="Antonio", apellidos="Moreno Carmona", dni="41ss447781X")))
-print(persona.save(dict( nombre="Pere", apellidos="Moreno Marí", dni="41d447781X")))
-"""
+                TextField('apellidos', sortable=True),
+                TextField('pais', sortable=True)
+                ))
 
+
+class rDatabase(object):
+
+    def __init__(self, r):
+        """ a redis database with a collection of descriptions """
+        self.r = r
+        self.dependants=[]
+        
+        self.pais=Pais(self)
+        self.persona=Persona(self)
+
+        # persona depén de pais en el camp pais
+        self.set_fk(self.persona, self.pais)
+
+    def set_fk(self, definition:rWTFDocument, depends_of: rWTFDocument):
+        self.dependants.append((definition, depends_of))        
+
+    def tabbed(self, docs:list)->str:
+        # return a tablib with all data    
+        # print(db.tabbed(persona.search("*", sort_by="apellidos").docs))    
+        if len(docs)>0:                        
+            docs=self.docs_to_dict(docs)            
+            keys=[k for k in docs[0].keys()]            
+            tab=tablib.Dataset(headers=keys)        
+            for p in docs:
+                tab.append(p.values())
+            return tab
+        else:
+            return ''
+
+
+db=rDatabase(r)
+
+print(db.pais.save(dict( id="ES", description="España")))
+print(db.pais.save(dict( id="FR", description="Francia")))
+print(db.pais.save(dict( id="DE", description="Alemania")))
+print(db.pais.save(dict( id="IT", description="Italia")))
+
+print(db.persona.save(dict( nombre="Pere", apellidos="Vilás Marí", dni="algo", pais="PAIS:FR")))
+print(db.persona.save(dict( nombre="Manuel", apellidos="Guijarro Pulido", dni="41d47781X", pais="PAIS:FR")))
+print(db.persona.save(dict( nombre="Antonio", apellidos="Moreno Carmona", dni="41ss447781X", pais="PAIS:ES")))
+print(db.persona.save(dict( nombre="Pere", apellidos="Moreno Marí", dni="41d447781X", pais="PAIS:DE")))
+
+"""
 for p in persona.search("*", sort_by="apellidos").docs:
     print(p.nombre, p.apellidos)
+"""
+
+db.pais.delete('PAIS:ES')
+
+print(db.tabbed(persona.search("*", sort_by="apellidos").docs))
+
+persona.delete('PERSONA:00000002')
+print("persona deleted")
+
+print(db.tabbed(persona.search("*", sort_by="apellidos").docs))
 
 exit(0)
 
@@ -175,62 +451,6 @@ def count_elapsed_time(f):
         return ret
     
     return wrapper
-
-def id_generator(size=24, chars=string.ascii_uppercase + string.digits):    
-    return ''.join(random.choice(chars) for _ in range(size))
-
-def str_to_int(val:str)->int:
-    return int(binascii.hexlify(val.encode('utf-8')), 16)
-
-def key_sanitize(s:str)->str:
-    l=[]
-    for i in s:
-        if i in set(string.ascii_letters + string.digits):
-            l.append(i)
-    return ''.join(l).upper()
-
-def save(r: redis.Redis, prefix:str, obj:dict)->str:            
-    # si no hi ha camp d'index, el cream i el populam
-    if obj.get('id', None) is None: 
-        # el nom de sa clau acaba en _KEY
-        NOM_COMPTADOR=f"{prefix.upper()}_KEY"        
-        # miram si està el comptador de ids
-        n=r.get(NOM_COMPTADOR)
-        # print(f"compatdor es {NOM_COMPTADOR} = {n}")
-        if n is None:
-            r.set(NOM_COMPTADOR, 1)
-            n=1      
-        # print(f"n = {n}")              
-        obj['id']=f'{n}'.rjust(8, '0') #f'{n:08}'
-        r.incr(NOM_COMPTADOR)
-    else: # si hi ha camp d'index, el sanitizam
-        obj['id']=key_sanitize(obj['id'])
-    
-    # si no hi ha camp de creacio, el cream i el populam
-    if obj.get('created_on', None) is None:
-        obj['created_on']=now()
-    
-    # el camp updated_on el populam sempre
-    obj['updated_on']=now()
-
-    # cream la clau
-    NOM_CLAU = f"{prefix.upper()}:{obj['id']}"
-    # print(f"La clau es {NOM_CLAU}")
-
-    # salvam el diccionari
-    r.hset(NOM_CLAU, mapping=obj)
-
-    return NOM_CLAU
-
-@count_elapsed_time
-def haz(r):
-    start_time = time()
-    for a in range(0, 10):
-        persona=dict(dni=f'41{a}', nombre=f'Pepe {a} illo', apellidos=id_generator())  
-        save(r, 'PERSONA', persona)
-    elapsed_time = time() - start_time
-    print("Creation time: %0.10f seconds." % elapsed_time)
-
 
 
 random.seed(444)
