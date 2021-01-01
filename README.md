@@ -1,10 +1,6 @@
-# rDatabase
+# rDatabase - A very lightweight RediSearch interface with foreign keys and input validation
 
-A very lightweight interface with RediSearch.
-
-It implements **foreign keys and input validation via WTForms**.
-
-You can **save**, **delete** and **query** documents.
+With rDatabase you can **validate**, **save**, **delete** and **query** documents. It helps you to maintain the database consistency.
 
 ```python
 class Country(rBasicDocument):
@@ -14,11 +10,13 @@ class Country(rBasicDocument):
 
 class Persona(rWTFDocument):
     class AddForm(Form):
+        """ validation Form for the Persona document """
         id = StringField('Id', [validators.Length(min=3, max=50), validators.InputRequired()]) 
         name = StringField('Name', [validators.Length(max=50), validators.InputRequired()]) 
-        country = StringField('Pais', [validators.Length(max=50), validators.InputRequired()]) 
+        country = StringField('Country', [validators.Length(max=50), validators.InputRequired()]) 
 
     def __init__(self, db):
+        """ refer to RediSearch documentation to know about index definition """
         super().__init__(db, 'PERSONA', 
             idx_definition= (                                
                 TextField('id', sortable=True),                
@@ -29,6 +27,7 @@ class Persona(rWTFDocument):
 class rTestDatabase(rDatabase):
 
     def __init__(self, r):
+        """ create a database with two defined documents and their relationships """
         super().__init__(r)
 
         # create definition documents
@@ -41,7 +40,7 @@ class rTestDatabase(rDatabase):
 
 db=rTestDatabase(r)
 
-print("Create some documents")
+print("Validate and save some documents")
 print(db.country.save(id="ES", description="España"))
 print(db.country.save(id="FR", description="Francia"))
 print(db.country.save(id="DE", description="Alemania"))
@@ -52,17 +51,16 @@ print(db.persona.save(name="Hermman", country=db.k("COUNTRY","DE")))
 print(db.persona.save(name="Pierre", country=db.k("COUNTRY","FR")))
 
 """
-# list some data about persona refer RediSearch for query syntax
+# list some data about persona. Refer RediSearch for query syntax
 for p in persona.search("*", sort_by="name").docs:
     print(p.name, p.country)
 """
 
-#uncomment this to raise an exception: the country PP does not exist
+#uncomment next line to raise an exception: the country PP does not exist
 #print(db.persona.save(name="Pere", country=db.k("COUNTRY","PP")))
 
-# delete a pais and try to insert a new persona with it -> it will raise an exception
-#db.pais.delete(db.k("COUNTRY", "IT"))
-#print(db.persona.save(name="Guiovani", country=db.k("COUNTRY","IT")))
+# delete country ES -> it will raise an exception because there is more than zero Persona with this country
+#db.country.delete(db.k("COUNTRY", "ES"))
 
 # list personas
 print(db.tabbed(db.persona.search("*", sort_by="name").docs))
