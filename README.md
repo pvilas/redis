@@ -2,7 +2,7 @@
 
 A very lightweight interface with RediSearch.
 
-It implements **foreign keys and imput validation via WTForms**.
+It implements **foreign keys and input validation via WTForms**.
 
 You can **save**, **delete** and **query** documents.
 
