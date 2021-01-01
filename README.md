@@ -1,6 +1,6 @@
 # rDatabase - A very lightweight RediSearch interface with foreign keys and input validation
 
-With rDatabase you can **validate**, **save**, **delete** and **query** documents. It helps you to maintain the database consistency.
+With rDatabase you can **validate**, **save**, **delete** and **query** documents with Redis. Moreover, it helps you to maintain the database consistency.
 
 ```python
 class Country(rBasicDocument):
@@ -52,7 +52,7 @@ print(db.persona.save(name="Pierre", country=db.k("COUNTRY","FR")))
 
 """
 # list some data about persona. Refer RediSearch for query syntax
-for p in persona.search("*", sort_by="name").docs:
+for p in db.persona.search("*", sort_by="name").docs:
     print(p.name, p.country)
 """
 
