@@ -1,6 +1,6 @@
 # rDatabase - A very lightweight RediSearch interface with foreign keys and input validation
 
-With rDatabase you can **validate**, **save**, **delete**, **query** and **paginate** documents with Redis. Moreover, it helps you to maintain the database consistency.
+With rDatabase you can **validate**, **save**, **delete**, **query** and **paginate** documents with **Redis**. Moreover, it helps you to maintain the database consistency.
 
 ```python
 class Country(rBasicDocument):
