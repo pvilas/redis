@@ -1,6 +1,6 @@
 # rDatabase - A very lightweight RediSearch interface with foreign keys and input validation
 
-With rDatabase you can **validate**, **save**, **delete** and **query** documents with Redis. Moreover, it helps you to maintain the database consistency.
+With rDatabase you can **validate**, **save**, **delete**, **query** and **paginate** documents with Redis. Moreover, it helps you to maintain the database consistency.
 
 ```python
 class Country(rBasicDocument):
@@ -74,6 +74,58 @@ page=5
 p=db.country.paginate(query="*", page=page, num=10, sort_by='description', direction=True)
 print(f"\nItems of country, page {page}\n"+'-'*30)
 print(p.items)
+```
+
+
+### Pagination example with jinja2
+
+You only need to define the following macro, taken from Flask-bootstrap, and call it with the paginator object as ```{{render_pagination(p)}}```.
+
+```jinja
+{% macro render_pagination(pagination,
+                           endpoint=None,
+                           prev=('&laquo;')|safe,
+                           next=('&raquo;')|safe,
+                           size=None,
+                           ellipses='…',
+                           args={},
+                           fragment='',
+                           align=''
+                           )-%}
+   
+            <nav aria-label="Page navigation">
+                <ul class="pagination{% if size %} pagination-{{ size }}{% endif %} {% if align == 'center' %}justify-content-center{% elif align == 'right' %}justify-content-end{% endif %}"{{ kwargs|xmlattr }}>
+                    {# prev and next are only show if a symbol has been passed. #}
+                    {% if prev != None -%}
+                        <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
+                            <a class="page-link" data-page="{%if pagination.has_prev%}{{pagination.prev_num}}{%else%}#{%endif%}" href="#">{{ prev }}</a>
+                        </li>
+                    {%- endif -%}
+
+                    {%- for page in pagination.iter_pages() %}
+                        {% if page %}
+                            {% if page != pagination.page %}
+                                <li class="page-item">
+                                    <a class="page-link" href="#" data-page="{{page}}">{{ page }}</a>
+                                </li>
+                            {% else %}
+                                <li class="page-item active">
+                                    <a class="page-link"  data-page="{{page}}" href="#">{{ page }} <span class="sr-only">(current)</span></a>
+                                </li>
+                            {% endif %}
+                        {% elif ellipses != None %}
+                            <li class="page-item disabled"><a class="page-link" href="#">{{ ellipses }}</a></li>
+                        {% endif %}
+                    {%- endfor %}
+
+                    {% if next != None -%}
+                        <li class="page-item {% if not pagination.has_next %}disabled{% endif %}">
+                            <a class="page-link" data-page="{% if pagination.has_next%}{{pagination.next_num}}{%else%}#{%endif%}" href="#">{{ next }}</a>
+                        </li>
+                    {%- endif -%}
+                </ul>
+            </nav>
+{% endmacro %}
 ```
 
 ### Some info about Redis and RediSearch
