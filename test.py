@@ -25,6 +25,7 @@ class Persona(rWTFDocument):
                 TextField('country', sortable=True) # same name as the referenced document
                 ))
 
+
 class rTestDatabase(rDatabase):
 
     def __init__(self, r):
@@ -41,11 +42,6 @@ class rTestDatabase(rDatabase):
 
 if __name__ == "__main__":
 
-    # print warning
-    print('WARNING! This script will flush your database 0. Please comment the following exit(0) before to proceed.')
-    
-    #exit(0)
-
     # create redis conn 
     r=redis.Redis(
         host='localhost',
@@ -53,25 +49,27 @@ if __name__ == "__main__":
     )
 
     # WARNING!! this will delete all your data
-    r.flushdb()
+    #r.flushdb()
 
     db=rTestDatabase(r)
 
     print("Create some documents")
+    
     print(db.country.save(id="ES", description="España"))
     print(db.country.save(id="FR", description="Francia"))
     print(db.country.save(id="DE", description="Alemania"))
     print(db.country.save(id="IT", description="Italia"))
     
+
     print(db.persona.save(name="Manuel", country=db.k("COUNTRY","ES")))
     print(db.persona.save(name="Hermman", country=db.k("COUNTRY","DE")))
     print(db.persona.save(name="Pierre", country=db.k("COUNTRY","FR")))
 
-    """
+    
     # list some data about persona
-    for p in persona.search("*", sort_by="name").docs:
+    print("\nSome personas\n"+'-'*30)
+    for p in db.persona.search("*", sort_by="name").docs:
         print(p.name, p.country)
-    """
 
     #uncomment this to raise an exception: the country PP does not exist
     #print(db.persona.save(name="Pere", country=db.k("COUNTRY","PP")))
@@ -81,11 +79,21 @@ if __name__ == "__main__":
     #print(db.persona.save(name="Guiovani", country=db.k("COUNTRY","IT")))
 
     # list personas, refer to RediSearch for query syntax
+    print("\nPersonas tabbed list\n"+'-'*30)
     print(db.tabbed(db.persona.search("*", sort_by="name").docs))
 
+    """
     db.persona.delete('PERSONA:00000002')
     print("persona deleted")
 
     print(db.tabbed(db.persona.search("*", sort_by="name").docs))
+    """
 
+    # test pagination 
+    # run `python dataset.py` first to create the test dataset
+    page=5
+    p=db.country.paginate(query="*", page=page, num=10, sort_by='description', direction=True)
+    print(f"\nItems of country, page {page}\n"+'-'*30)
+    print(p.items)
+    
     exit(0)

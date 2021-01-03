@@ -3,7 +3,7 @@ from datetime import datetime
 from collections.abc import MutableMapping
 import random
 import string
-from time import time
+import time
 import binascii
 from redisearch import Client, TextField, NumericField,\
                         TextField as DateField, TextField as DatetimeField,\
@@ -13,6 +13,7 @@ from loguru import logger
 from wtforms import Form, BooleanField, StringField, HiddenField, validators
 from werkzeug.datastructures import MultiDict
 import tablib
+from pagination import Pagination
 
 ver="0.5"
 
@@ -80,9 +81,6 @@ class rBaseDocument(object):
         self.db=db
         self.prefix=prefix.upper()
         self.idx=Client(f"idx{self.db.delim}{self.prefix}", conn=db.r)
-
-        # a list of the foreign key to check before save a document
-        self.foreigns=[] 
 
         # cream index damunt la taula, p.e. PERSONA:
         # saltarà excepció si ja existeix
@@ -239,11 +237,29 @@ class rBaseDocument(object):
             ## Return 
             A list of records
         """
-        try:
+        try:            
             q=Query(query).slop(slop).sort_by(sort_by, direction).paging(start, num)
             return self.idx.search(q)
         except Exception as ex:
             raise rSearchException(str(ex), {'query':query})
+    
+    def paginate(self, query:str, page:int=1, num:int=10, sort_by:str='id', direction:bool=True, slop:int=0)->Pagination:
+        try:     
+            tic = time.perf_counter()       
+            start=(page-1)*num
+            # count total of docs to calculate the total of pages
+            total=self.idx.search(Query(query).slop(slop).paging(0, 0)).total
+            # construct the query, paginated start and num
+            q=Query(query).slop(slop).sort_by(sort_by, direction).paging(start, num)
+            # perform the query
+            items=self.idx.search(q).docs
+            elapsed_time = time.perf_counter() - tic
+            logger.debug(f"Pagination over {self.prefix}({query}) done in {(time.perf_counter() - tic)*1000:0.3f}ms")
+            p=Pagination(page=page, per_page=num, total=total, items=items)
+            return p
+        except Exception as ex:
+            raise rSearchException(str(ex), {'query':query})
+
 
 class rWTFDocument(rBaseDocument):
     class AddForm(Form):
