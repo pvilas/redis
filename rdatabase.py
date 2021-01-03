@@ -151,7 +151,7 @@ class rBaseDocument(object):
                 doc['id']=f'{n}'.rjust(8, '0') #f'{n:08}'
                 self.db.r.incr(NOM_COMPTADOR)
             else: 
-                # sanitize the id -> remove non alpha characters and the delimitator from the id
+                # sanitize the id -> remove non alpha-numeric characters and the delimitator from the id
                 doc['id']=self.db.delim.join([self.db.key_sanitize(t) for t in doc['id'].split(self.db.delim)])
 
             # call before_save, can raise an exception
