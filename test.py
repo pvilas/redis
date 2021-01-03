@@ -93,7 +93,7 @@ if __name__ == "__main__":
     # run `python dataset.py` first to create the test dataset
     page=5
     p=db.country.paginate(query="*", page=page, num=10, sort_by='description', direction=True)
-    print(f"\nItems of country, page {page}\n"+'-'*30)
+    print(f"\nDocuments in country, page {page}\n"+'-'*30)
     print(p.items)
 
     exit(0)
