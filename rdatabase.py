@@ -150,8 +150,9 @@ class rBaseDocument(object):
                 # print(f"n = {n}")              
                 doc['id']=f'{n}'.rjust(8, '0') #f'{n:08}'
                 self.db.r.incr(NOM_COMPTADOR)
-            else: # si hi ha camp d'index, el sanitizam
-                doc['id']=self.db.key_sanitize(doc['id'])
+            else: 
+                # sanitize the id -> remove non alpha characters and the delimitator from the id
+                doc['id']=self.db.delim.join([self.db.key_sanitize(t) for t in doc['id'].split(self.db.delim)])
 
             # call before_save, can raise an exception
             doc=self.before_save(doc)        
@@ -164,8 +165,10 @@ class rBaseDocument(object):
             doc['updated_at']=self.db.now()
 
             # cream la clau
-            NOM_CLAU = self.db.k(self.prefix, doc['id']) #f"{self.prefix.upper()}{self.db.delim}{doc['id']}"
-            # print(f"La clau es {NOM_CLAU}")
+            if not doc['id'].startswith(self.prefix+self.db.delim):
+                NOM_CLAU = doc['id'] = self.db.k(self.prefix, doc['id']) #f"{self.prefix.upper()}{self.db.delim}{doc['id']}"                
+            else:
+                NOM_CLAU = doc['id']
 
             # salvam el diccionari
             self.idx.redis.hset(NOM_CLAU, mapping=doc)
@@ -346,7 +349,7 @@ class rDatabase(object):
         """ a redis database with a collection of descriptions """
         self.r = r
         self.dependants=[]
-        self.delim='/' # do not use colon
+        self.delim='.' # do not use {:, /, #, ?} or anything related with url encoding
 
     def set_fk(self, definition:rWTFDocument, depends_of: rWTFDocument)->None:
         self.dependants.append((definition, depends_of))        
