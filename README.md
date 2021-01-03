@@ -56,16 +56,18 @@ for p in db.persona.search("*", sort_by="name").docs:
     print(p.name, p.country)
 """
 
-#uncomment next line to raise an exception: the country PP does not exist
+# uncomment next line to raise an exception: the country PP does not exist
+# we cannot create a persona with and unexistent country
 #print(db.persona.save(name="Pere", country=db.k("COUNTRY","PP")))
 
-# delete country ES -> it will raise an exception because there is more than zero Persona with this country
+# delete country ES -> it will raise an exception because there is more than 
+# zero Persona with this country, we cannot delete it
 #db.country.delete(db.k("COUNTRY", "ES"))
 
 # list personas
 print(db.tabbed(db.persona.search("*", sort_by="name").docs))
 
-db.persona.delete('PERSONA:00000002')
+db.persona.delete('PERSONA/00000002')
 print("persona deleted")
 
 # test pagination 

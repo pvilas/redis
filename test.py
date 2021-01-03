@@ -83,7 +83,7 @@ if __name__ == "__main__":
     print(db.tabbed(db.persona.search("*", sort_by="name").docs))
 
     """
-    db.persona.delete('PERSONA:00000002')
+    db.persona.delete('PERSONA/00000002')
     print("persona deleted")
 
     print(db.tabbed(db.persona.search("*", sort_by="name").docs))
@@ -95,5 +95,5 @@ if __name__ == "__main__":
     p=db.country.paginate(query="*", page=page, num=10, sort_by='description', direction=True)
     print(f"\nItems of country, page {page}\n"+'-'*30)
     print(p.items)
-    
+
     exit(0)
