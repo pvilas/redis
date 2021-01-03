@@ -166,7 +166,7 @@ class rBaseDocument(object):
 
             # cream la clau
             if not doc['id'].startswith(self.prefix+self.db.delim):
-                NOM_CLAU = doc['id'] = self.db.k(self.prefix, doc['id']) #f"{self.prefix.upper()}{self.db.delim}{doc['id']}"                
+                NOM_CLAU = doc['id'] = self.db.k(self.prefix, doc['id'])
             else:
                 NOM_CLAU = doc['id']
 
