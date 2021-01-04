@@ -19,7 +19,7 @@ ver="0.5"
 
 class rDocumentException(Exception):
     def __init__(self, message="Error message", doc:dict={})->None:
-        logger.warning(f"rDocumentException ({type(self).__name__}) {doc.get('id', 'no_id')}: {message}. El documento era {doc}.")
+        logger.warning(f"rDocumentException ({type(self).__name__}) {doc.get('id', 'no_id')}: {message}. The document was {doc}.")
         super().__init__(message)
 
 class rValidationException(rDocumentException):
@@ -82,14 +82,21 @@ class rBaseDocument(object):
         self.prefix=prefix.upper()
         self.idx=Client(f"idx{self.db.delim}{self.prefix}", conn=db.r)
 
-        # cream index damunt la taula, p.e. PERSONA:
-        # saltarà excepció si ja existeix
+        # buil index over documents
+        # it will raise an exception if already exists
         try:
             self.idx.create_index(
                 idx_definition,
                 definition=IndexDefinition(prefix=[f'{self.prefix}{self.db.delim}']))
         except Exception as ex:
             pass
+
+    def get(self, id:str)->dict:
+        """ return a document or None 
+            ## Param
+            * id - is the full id 
+        """
+        return self.db.r.hgetall(self.sanitize(id))
 
     def validate_foreigns(self, doc:dict)->None:
         """ Called before save.
@@ -104,9 +111,9 @@ class rBaseDocument(object):
         for d, f in self.db.dependants:            
             if d.prefix==self.prefix:
                 if doc.get(f.prefix.lower()) is None:
-                    raise rFKNotExists(f"El miembro {f.prefix.lower()} de {self.prefix} no existe en el docuento", doc)
+                    raise rFKNotExists(f"The member {f.prefix.lower()} of {self.prefix} does not exist in the document.", doc)
                 if not self.db.r.exists(doc.get(f.prefix.lower())):
-                    raise rFKNotExists(f"El miembro {d.prefix}.{f.prefix.lower()}, con valor {doc.get(f.prefix.lower())}, no existe como clave foránea de {f.prefix.upper()}", doc)
+                    raise rFKNotExists(f"The member {d.prefix}.{f.prefix.lower()}, with value {doc.get(f.prefix.lower())}, does not exist as a foreign key of {f.prefix.upper()}", doc)
 
     def before_save(self, doc:dict)->dict:
         """ Check, sanitize, etc... 
@@ -125,6 +132,28 @@ class rBaseDocument(object):
         self.validate_foreigns(doc)
         return doc        
 
+    def sanitize(self, id:str)->str:
+        """ Sanitize and id before use it 
+            
+            ## Param 
+            * id - the str to sanitize
+            ## Exceptions
+            rsaveException if the key is invalid (len==0)
+        """
+        # sanitize the id -> remove non alpha-numeric characters and the delimitator from the id
+        id=self.db.delim.join([self.db.key_sanitize(t) for t in id.split(self.db.delim)])
+
+        # remove any delim character after the document name
+        if id.startswith(self.prefix+self.db.delim):
+            id_part=''.join([t for t in id.split(self.db.delim)[1:]])
+            if len(id_part)==0:
+                raise rSaveException("Len of id cant be zero", {'id':id})
+            id=f"{self.prefix}{self.db.delim}{id_part}"
+        else:
+            # prefix the id with the document name
+            id = self.db.k(self.prefix, id)
+        return id
+
     def after_save(self, doc:dict, id: str) -> None:
         """ Do tasks after save
             ## Param 
@@ -137,22 +166,21 @@ class rBaseDocument(object):
 
     def save(self, **doc:dict)->str:            
         try:
-            # si no hi ha camp d'index, el cream i el populam
+            # if there isn't an id field, create and populate it
             if doc.get('id', None) is None: 
-                # el nom de sa clau acaba en _KEY
+                # the counters always ends with _KEY
                 NOM_COMPTADOR=f"{self.prefix.upper()}_KEY"        
-                # miram si està el comptador de ids
-                n=self.db.r.get(NOM_COMPTADOR)
-                # print(f"compatdor es {NOM_COMPTADOR} = {n}")
+                # create the counter if it not exists
+                n=self.db.r.get(NOM_COMPTADOR)                
                 if n is None:
                     self.db.r.set(NOM_COMPTADOR, 1)
                     n=1      
-                # print(f"n = {n}")              
-                doc['id']=f'{n}'.rjust(8, '0') #f'{n:08}'
+                # rpad with zeros
+                doc['id']=f'{n}'.rjust(8, '0')
                 self.db.r.incr(NOM_COMPTADOR)
-            else: 
-                # sanitize the id -> remove non alpha-numeric characters and the delimitator from the id
-                doc['id']=self.db.delim.join([self.db.key_sanitize(t) for t in doc['id'].split(self.db.delim)])
+            
+            # sanitize the id
+            doc['id']=self.sanitize(doc['id'])
 
             # call before_save, can raise an exception
             doc=self.before_save(doc)        
@@ -164,41 +192,36 @@ class rBaseDocument(object):
             # el camp updated_on el populam sempre
             doc['updated_at']=self.db.now()
 
-            # cream la clau
-            if not doc['id'].startswith(self.prefix+self.db.delim):
-                NOM_CLAU = doc['id'] = self.db.k(self.prefix, doc['id'])
-            else:
-                NOM_CLAU = doc['id']
-
             # salvam el diccionari
-            self.idx.redis.hset(NOM_CLAU, mapping=doc)
+            self.idx.redis.hset(doc['id'], mapping=doc)
 
             # cridam after save
-            self.after_save(doc, NOM_CLAU)
+            self.after_save(doc, doc['id'])
 
-            return NOM_CLAU
+            return doc['id']
         except Exception as ex:
             logger.error(f"Database error while saving doc id {doc.get('id')}: {ex}")
             raise rSaveException(ex, doc)
 
     def before_delete(self, id:str)->None:
-        """ check if we can delete this document 
+        """ Check if we can delete this document 
             At this stage, we can delete if this document is not the key of a foreign key
-            raise an Exception if not
+            raising an Exception if not
             ## Param
             * id - is the complete id prefix:id
             ## Exception
             rBeforeDeleteException
-        """         
+        """        
+        id=self.sanitize(id) 
         for d in self.db.dependants:
             # dependants està organitzat com p.e. (PERSONA, PAIS)
             # miram si la dependència s'aplica a aquest document
             if (self.prefix==d[1].prefix): # volem esborrar un pais i persona en depén
-                print(f"{d[0].prefix} depén de {self.prefix}, comprovant si hi ha algun doc a {d[0].prefix} amb la clau {id}")
+                # print(f"{d[0].prefix} depén de {self.prefix}, comprovant si hi ha algun doc a {d[0].prefix} amb la clau {id}")
                 cad=f'@{d[1].prefix.lower()}:{id}'
-                print(f"La cadena de busqueda a {d[0].prefix} es {cad}")                
+                # print(f"La cadena de busqueda a {d[0].prefix} es {cad}")                
                 if d[0].search(cad).total>0:
-                    raise rDeleteFKException(f"No se puede borrar {id} de {self.prefix} porque hay documentos en {d[0].prefix} que tienen esta clave", {"id":id})
+                    raise rDeleteFKException(f"Cant delete {id} of {self.prefix} because there are document of {d[0].prefix} that have this key.", {"id":id})
 
     def after_delete(self, id:str)->None:
         """ Perform some action after deletion
@@ -219,6 +242,7 @@ class rBaseDocument(object):
             ## Exceptions
             rDeleteException
         """
+        id=self.sanitize(id)
         self.before_delete(id)
         try:
             self.db.r.delete(id)
@@ -257,7 +281,7 @@ class rBaseDocument(object):
             # perform the query
             items=self.idx.search(q).docs
             elapsed_time = time.perf_counter() - tic
-            logger.debug(f"Pagination over {self.prefix}({query}) done in {(time.perf_counter() - tic)*1000:0.3f}ms")
+            logger.debug(f"Pagination over {self.prefix}({query}) with {num} of {total} results done in {(elapsed_time*1000):0.3f}ms")
             p=Pagination(page=page, per_page=num, total=total, items=items)
             return p
         except Exception as ex:
@@ -271,6 +295,10 @@ class rWTFDocument(rBaseDocument):
          
     class EditForm(AddForm):
         id = HiddenField()        
+
+    class DeleteForm(AddForm):
+        id = HiddenField()        
+        description = StringField('Descripción', render_kw={'readonly':True}) 
 
     class SearchForm(Form):
         pass
@@ -300,7 +328,7 @@ class rWTFDocument(rBaseDocument):
     def validate(self, doc:dict, use_form:Form=None)->dict:
         """ validate the imput using an WTForm """
         if not doc:
-            raise rBeforeSaveException('No puede validarse un documento nulo')
+            raise rBeforeSaveException('Cant validate a null document')
 
         # create the addform with the doc
         try:
@@ -310,9 +338,9 @@ class rWTFDocument(rBaseDocument):
                 doc=form.data
                 return doc
             else:
-                raise rValidationException(f'Hay errores de validación: {form.errors}', doc)
+                raise rValidationException(f'There are validation errors: {form.errors}', doc)
         except Exception as ex:
-            raise rBeforeSaveException(f"Error validando: {ex}", doc)
+            raise rBeforeSaveException(f"Error validating: {ex}", doc)
 
 
     def before_save(self, doc:dict)->dict:
@@ -388,7 +416,6 @@ class rDatabase(object):
                 fields.update({ field : getattr(doc, field) })            
             reslist.append(fields)
         return reslist
-
 
     def tabbed(self, docs:list)->str:
         # return a tablib with all data    

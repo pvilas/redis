@@ -49,7 +49,7 @@ if __name__ == "__main__":
     )
 
     # WARNING!! this will delete all your data
-    #r.flushdb()
+    # r.flushdb()
 
     db=rTestDatabase(r)
 
@@ -71,12 +71,32 @@ if __name__ == "__main__":
     for p in db.persona.search("*", sort_by="name").docs:
         print(p.name, p.country)
 
-    #uncomment this to raise an exception: the country PP does not exist
-    #print(db.persona.save(name="Pere", country=db.k("COUNTRY","PP")))
+    # The country PP does not exist -> raise ex
+    try:
+        print("Saving with non existent foreign key...")
+        print(db.persona.save(name="Pere", country=db.k("COUNTRY","PP")))
+    except Exception as ex:
+        print(f"Saving with non existent foreign key raised an exception: {ex}")
 
-    # delete a pais and try to insert a new persona with it -> it will raise an exception
-    #db.pais.delete(db.k("COUNTRY", "IT"))
-    #print(db.persona.save(name="Guiovani", country=db.k("COUNTRY","IT")))
+    # delete a country and try to insert a new persona with it -> it will raise an exception
+    try:        
+        db.country.delete(db.k("COUNTRY", "IT"))
+        print("Saving with non existent foreign key...")
+        print(db.persona.save(name="Guiovani", country=db.k("COUNTRY","IT")))
+    except Exception as ex:
+        print(f"Saving with non existent foreign key raised an exception: {ex}")
+
+    # create a persona with a deliminator and an invalid character in the key -> the key will be sanitized
+    print(db.persona.save(id=" gúg.gg", name="Michael", country=db.k("COUNTRY","FR")))
+    print(db.persona.save(id="PERSONA. .ñ.xx .yy", name="François", country=db.k("COUNTRY","FR")))
+
+    # create a persona with an invalid key -> must raise an exception
+    try:
+        print("Saving with an invalid key...")
+        print(db.persona.save(id="PERSONA..", name="Must raise ex", country=db.k("COUNTRY","FR")))
+    except Exception as ex:
+        print(f"Saving with an invalid key raised an exception: {ex}")
+
 
     # list personas, refer to RediSearch for query syntax
     print("\nPersonas tabbed list\n"+'-'*30)
@@ -89,8 +109,10 @@ if __name__ == "__main__":
     print(db.tabbed(db.persona.search("*", sort_by="name").docs))
     """
 
+    print("\nCreating some countries...\n"+'-'*30)
+    import dataset
+
     # test pagination 
-    # run `python dataset.py` first to create the test dataset
     page=5
     p=db.country.paginate(query="*", page=page, num=10, sort_by='description', direction=True)
     print(f"\nDocuments in country, page {page}\n"+'-'*30)

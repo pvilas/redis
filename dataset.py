@@ -1,7 +1,6 @@
 import redis
 from test import rTestDatabase
 
-
 r=redis.Redis(
     host='localhost',
     decode_responses=True # decode all to utf-8
@@ -11,7 +10,6 @@ r=redis.Redis(
 # r.flushdb()
 
 db=rTestDatabase(r)
-
 
 print(db.country.save(id="ABW", description="Aruba"))
 print(db.country.save(id="AFG", description="Afghanistan"))

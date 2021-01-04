@@ -1,11 +1,12 @@
 # rDatabase - A very lightweight RediSearch interface with foreign keys and input validation
 
-With rDatabase you can **validate**, **save**, **delete**, **query** and **paginate** documents with **Redis**. Moreover, it helps you to maintain the database consistency.
+With rDatabase you can **validate**, **save**, **delete**, **query** and **paginate** documents with **Redis**. Moreover, it helps you to maintain the database consistency. It uses the [redisearch](https://oss.redislabs.com/redisearch/) module.
+
 
 ```python
 class Country(rBasicDocument):
     def __init__(self, db):
-        """ a basic document already has id and description fields """
+        """ a basic document, already has the id and description fields """
         super().__init__(db, 'COUNTRY')
 
 class Persona(rWTFDocument):
@@ -78,12 +79,74 @@ print(f"\nItems of country, page {page}\n"+'-'*30)
 print(p.items)
 ```
 
+## Installation
 
-### Html paginator example
+Be sure you have python>=3.7 with `python -V`, clone the project and
 
-As an example, include `paginate.jinja` (taken from Flask-bootstrap) in your project and call it from your template with the paginator object as ```{{render_pagination(p)}}```.
+```pip install -r requirements.txt```
 
-### Some info about Redis and RediSearch
+Run test
+
+```python test.py```
+
+## Delimitator
+
+In **rDatabase** the key and the mandatory id of the document are the same.
+
+If you are thinking on using the database with a web app, it could be better not to use http-related characters like `{?, :, /, #, ...}` as a separator. The reason is that you would use the id of the document in your http querys (as in `http://something.com/products/id_of_the_product`) and these characters will interfere if you dont encode it.
+
+It is far better use something like `{., -, _, }`.
+
+The default delimitator is `.`.
+
+
+## Index service
+
+The document index is build according the definition the first time that a document is instantiated. The subsequent changes, like add or remove fields from the index are not serviced. 
+
+### Index definition
+
+You define the index in the docuent declaration as in:
+
+```python
+class Persona(rWTFDocument):
+    def __init__(self, db):        
+        super().__init__(db, 'PERSONA', 
+            idx_definition= (                                
+                TextField('id', sortable=True),                
+                TextField('name', sortable=True),             
+                TextField('country', sortable=True) # same name as the referenced document
+                ))
+```
+
+And the index is build when you instantiate for the first time the document, as in:
+
+```python
+class rTestDatabase(rDatabase):
+    def __init__(self, r):
+        super().__init__(r)
+
+        self.persona=Persona(self)
+```
+
+But further changes like add or remove fields from the index (e.g. remove `name` from the index) are not posted automaticaly to the database. You must change the index manually.
+
+### How to maintain the indices
+
+One solution is to delete manually the index with `> FT.DROPINDEX idx_name` and it will be rebuild the first time a document of its class is instantiated.
+
+If your database is in production, instead of deleting the index, it could be better to write manually the changes with [ft.alter schema add](https://oss.redislabs.com/redisearch/Commands/#ftalter_schema_add). You can get a report of the indices with `> FT._LIST` and information with`> FT.INFO idx_name`.
+
+
+### Jinja html paginator example
+
+To use the paginator, include `paginate.jinja` in your project and call it from your template with the paginator object as `{{render_pagination(p)}}`.
+
+## Redis and RediSearch
+
+#### Install redisearch package
+
+```pip install redisearch```
 
 #### Install Redis on OSX
 
@@ -117,11 +180,7 @@ Check for the search module:
 
 ```redis-cli module list```
 
-Start Redis on startup:
-
-```brew services start redis```
-
-Or, if you don't want/need a background service you can just run:
+If you don't want/need a background service you can just run:
 
 ```redis-server /usr/local/etc/redis.conf```
 
