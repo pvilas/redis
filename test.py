@@ -1,5 +1,5 @@
 import redis
-from rdatabase import rBasicDocument, rWTFDocument, rDatabase
+from rdatabase import rBasicDocument, rWTFDocument, rDatabase, BaseDefDoc
 from loguru import logger
 from wtforms import Form, BooleanField, StringField, HiddenField, validators
 from redisearch import Client, TextField, NumericField,\
@@ -8,22 +8,14 @@ from redisearch import Client, TextField, NumericField,\
 
 
 class Country(rBasicDocument):
-    def __init__(self, db):
-        super().__init__(db, 'COUNTRY')
+    pass
 
 class Persona(rWTFDocument):
-    class AddForm(Form):
-        id = StringField('ID', [validators.Length(min=3, max=50), validators.InputRequired()]) 
-        name = StringField('Name', [validators.Length(max=50), validators.InputRequired()]) 
-        country = StringField('Pais', [validators.Length(max=50), validators.InputRequired()]) 
-
-    def __init__(self, db):
-        super().__init__(db, 'PERSONA', 
-            idx_definition= (                                
-                TextField('id', sortable=True),                
-                TextField('name', sortable=True),             
-                TextField('country', sortable=True) # same name as the referenced document
-                ))
+    class DefDoc(BaseDefDoc):        
+        name = StringField('Name', validators=[validators.Length(max=50), validators.InputRequired()], render_kw=dict(indexed=True, on_table=True)) 
+        country = StringField( 'Pais', 
+                                validators=[validators.Length(max=50), validators.InputRequired()], 
+                                render_kw=dict(indexed=True, on_table=True, dependant=True))
 
 
 class rTestDatabase(rDatabase):
@@ -49,10 +41,14 @@ if __name__ == "__main__":
     )
 
     # WARNING!! this will delete all your data
-    # r.flushdb()
+    r.flushdb()
 
     db=rTestDatabase(r)
 
+    db.country.info()
+    db.persona.info()    
+
+    exit(0)
     print("Create some documents")
     
     print(db.country.save(id="ES", description="España"))
@@ -60,16 +56,14 @@ if __name__ == "__main__":
     print(db.country.save(id="DE", description="Alemania"))
     print(db.country.save(id="IT", description="Italia"))
     
-
     print(db.persona.save(name="Manuel", country=db.k("COUNTRY","ES")))
     print(db.persona.save(name="Hermman", country=db.k("COUNTRY","DE")))
     print(db.persona.save(name="Pierre", country=db.k("COUNTRY","FR")))
 
-    
     # list some data about persona
     print("\nSome personas\n"+'-'*30)
-    for p in db.persona.search("*", sort_by="name").docs:
-        print(p.name, p.country)
+    for p in db.persona.search("*", sort_by="name").docs:        
+        print(p.name, p.country.description)
 
     # The country PP does not exist -> raise ex
     try:

@@ -14,6 +14,8 @@ from wtforms import Form, BooleanField, StringField, HiddenField, validators
 from werkzeug.datastructures import MultiDict
 import tablib
 from pagination import Pagination
+import inspect
+from collections import namedtuple
 
 ver="0.5"
 
@@ -52,22 +54,29 @@ class rAfterDeleteException(rDocumentException):
 class rSearchException(rDocumentException):
     pass
 
+class BaseDefDoc(Form):
+    """ The minimun definition template for a document """    
+    id = StringField( 'Id', 
+                       validators=[validators.Length(min=2, max=50), validators.InputRequired()],
+                       render_kw=dict(indexed=True, on_table=False)
+    ) 
 
 class rBaseDocument(object):
-    def __init__(self, db, prefix:str, idx_definition=()):
+    is_redis:bool=True
+    query:str="*" # the default search string for this document
+
+    class DefDoc(BaseDefDoc):
+        # definition template for this document
+        pass
+
+    def __init__(self, db, prefix:str=None):
         """
             # rBaseDocument
             A RediSearch document but without imput validation
 
             ## Param
             conn - Redis connection
-            prefix - name of the document i.e. PERSONA
-            idx_fields - list of index fields
-                        i.e.
-                        (TextField('id', sortable=True), 
-                        TextField('dni', sortable=True), 
-                        TextField('nombre', sortable=True), 
-                        TextField('apellidos', sortable=True)), 
+            prefix - name of the document i.e. PERSONA or None, in this case we take the name of the class
 
             ## Remarks
             After the index creation (first time) the index definition is no longer synced with 
@@ -79,24 +88,72 @@ class rBaseDocument(object):
             And let redis to recreate it. This is usually fast but can't be an option in a production environment.
         """
         self.db=db
+        if not prefix:
+            prefix=type(self).__name__.upper()
         self.prefix=prefix.upper()
         self.idx=Client(f"idx{self.db.delim}{self.prefix}", conn=db.r)
 
-        # buil index over documents
-        # it will raise an exception if already exists
+        # discover the first level of foreign keys and include it into the results
+        self.discover=True 
+
+        # build index list for RediSearch and columns for an html table of the data
+        index=[]
+        self.columns=[] # list to columns to appear in an auto generated html table
+        self.dependant=[] # fields that depends of a foreign key
+        self.index=[] # list of index field names        
+        logger.debug(f"Members of document type {self.prefix}")
+        for field in self.DefDoc():
+            logger.debug(f"{field.name}({field.type}): {field.render_kw}")            
+            if field.render_kw:
+                # include field in index
+                if field.render_kw.get('indexed', False):
+                    self.index.append(field.name) # append to index field names list
+                    if field.type in ('DecimalField', 'FloatField', 'IntegerField'):
+                        index.append(NumericField(field.name, sortable=True))                    
+                    else:
+                        index.append(TextField(field.name, sortable=True))                     
+                # include field in html table columns
+                if field.render_kw.get('on_table', False):
+                    self.columns.append(field.name)
+
+        # build index 
         try:
             self.idx.create_index(
-                idx_definition,
+                index,
                 definition=IndexDefinition(prefix=[f'{self.prefix}{self.db.delim}']))
         except Exception as ex:
             pass
 
-    def get(self, id:str)->dict:
+    def info(self)->str:
+        print(f"{self.prefix} information\n"+'='*30)
+        print(f"Document members: {[(f.name,f.type) for f in self.DefDoc()]}")
+        print(f"Indices: {self.index}")
+        print(f"Foreign keys: {self.dependant}")
+        l=[]
+        for a, b in self.db.dependants:
+            if b.prefix==self.prefix:
+                l.append(a.prefix)
+        print(f"Documents that depend of this document: {l}")
+        print("")
+
+    def k(self, id:str)->str:
+        """ return a complete id: name+delim+id """
+        return self.sanitize(id)
+
+    def dict_to_namedtuple(self, p:dict, pref:str=None)->namedtuple:
+        named=namedtuple(pref or self.prefix, p.keys())
+        return named(**p)         
+
+    def get(self, id:str)->namedtuple:
         """ return a document or None 
             ## Param
             * id - is the full id 
         """
-        return self.db.r.hgetall(self.sanitize(id))
+        p=self.db.r.hgetall(self.sanitize(id))
+        if p:
+            return self.dict_to_namedtuple(self.db.r.hgetall(self.sanitize(id)))
+        else:
+            return None
 
     def validate_foreigns(self, doc:dict)->None:
         """ Called before save.
@@ -152,7 +209,7 @@ class rBaseDocument(object):
         else:
             # prefix the id with the document name
             id = self.db.k(self.prefix, id)
-        return id
+        return id.upper()
 
     def after_save(self, doc:dict, id: str) -> None:
         """ Do tasks after save
@@ -164,7 +221,7 @@ class rBaseDocument(object):
         """
         return None
 
-    def save(self, **doc:dict)->str:            
+    def save(self, **doc:dict)->str:        
         try:
             # if there isn't an id field, create and populate it
             if doc.get('id', None) is None: 
@@ -266,7 +323,30 @@ class rBaseDocument(object):
         """
         try:            
             q=Query(query).slop(slop).sort_by(sort_by, direction).paging(start, num)
-            return self.idx.search(q)
+            result=self.idx.search(q)
+            if not self.discover or len(self.dependant)==0:
+                return result
+            # discover first level foreign keys
+            docs=result.docs
+            if result.total>0 and len(self.dependant)>0:
+                docs_with_discover=[] # new list of docs
+                # for each document
+                for doc in self.db.docs_to_dict(result.docs):
+                    n={}
+                    # for each member of the doc
+                    for k, v in doc.items():                        
+                        # if this field is dependant
+                        if k.upper() in self.dependant: 
+                            # include a get of the foreign key as member_name.data
+                            n[k]=self.dict_to_namedtuple(self.db.r.hgetall(v), k.upper())
+                        else:
+                            n[k]=v                      
+                    # append to the list of new docs   
+                    docs_with_discover.append(self.dict_to_namedtuple(n))
+                docs=docs_with_discover
+            # return the result as a resisearch result
+            r=namedtuple('documents', ['total', 'docs'])
+            return r(total=result.total, docs=docs)
         except Exception as ex:
             raise rSearchException(str(ex), {'query':query})
     
@@ -289,21 +369,23 @@ class rBaseDocument(object):
 
 
 class rWTFDocument(rBaseDocument):
-    class AddForm(Form):
-        id = StringField('Id', [validators.Length(min=2, max=50), validators.InputRequired()]) 
-        description = StringField('Descripción', [validators.Length(max=50), validators.InputRequired()]) 
+    
+    class DefDoc(BaseDefDoc):
+        pass
          
+    class AddForm(DefDoc):
+        pass
+
     class EditForm(AddForm):
         id = HiddenField()        
 
-    class DeleteForm(AddForm):
+    class DeleteForm(EditForm):
         id = HiddenField()        
-        description = StringField('Descripción', render_kw={'readonly':True}) 
 
     class SearchForm(Form):
         pass
 
-    def __init__(self, db, prefix:str, idx_definition=()):
+    def __init__(self, db, prefix:str=None):
         """
             # rWTFDocument
             És un document de RediSearch amb validació de l'imput usant WTForms
@@ -316,24 +398,18 @@ class rWTFDocument(rBaseDocument):
             ## Param
             conn - sa connexió amb redis
             prefix - el nom de sa taula, passarà a majúscules, sense els dos punts
-            idx_fields - llistat amb parell de (nom, tipus)
-                        p.e.
-                        (TextField('id', sortable=True), 
-                        TextField('dni', sortable=True), 
-                        TextField('nombre', sortable=True), 
-                        TextField('apellidos', sortable=True)), 
         """
-        super().__init__(db, prefix, idx_definition)
-
+        super().__init__(db, prefix)
+                
     def validate(self, doc:dict, use_form:Form=None)->dict:
-        """ validate the imput using an WTForm """
+        """ validate the input using an WTForm """
         if not doc:
             raise rBeforeSaveException('Cant validate a null document')
 
         # create the addform with the doc
         try:
-            form_obj=use_form or self.AddForm
-            form=form_obj(doc)
+            form_obj=use_form or self.DefDoc
+            form=form_obj(doc)            
             if form.validate():
                 doc=form.data
                 return doc
@@ -363,13 +439,19 @@ class rWTFDocument(rBaseDocument):
         doc=super().before_save(doc)
         return self.validate(MultiDict(doc))
 
-class rBasicDocument(rWTFDocument):    
-    def __init__(self, db, prefix):
+class rBasicDocument(rWTFDocument):
+    class DefDoc(BaseDefDoc):
+        description = StringField( 'Descripción', 
+                                   validators = [validators.Length(max=50), validators.InputRequired()],
+                                   render_kw=dict(indexed=True, on_table=True)) 
+
+    class DeleteForm(DefDoc):
+        id = HiddenField()        
+        description = StringField('Descripción', render_kw={'readonly':True}) 
+
+    def __init__(self, db, prefix:str=None):
         """ a document with id and description """
-        super().__init__(db, prefix.upper(), 
-            idx_definition= (                                
-                TextField('id', sortable=True), 
-                TextField('description', sortable=True)))
+        super().__init__(db, prefix)
 
 class rDatabase(object):
 
@@ -380,7 +462,8 @@ class rDatabase(object):
         self.delim='.' # do not use {:, /, #, ?} or anything related with url encoding
 
     def set_fk(self, definition:rWTFDocument, depends_of: rWTFDocument)->None:
-        self.dependants.append((definition, depends_of))        
+        self.dependants.append((definition, depends_of))
+        definition.dependant.append(type(depends_of).__name__.upper())        
 
     def k(self, *id:str)->str:
         """ return a complete id: name+delim+id """
