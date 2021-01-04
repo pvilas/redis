@@ -5,7 +5,7 @@ from wtforms import Form, BooleanField, StringField, HiddenField, validators
 from redisearch import Client, TextField, NumericField,\
                         TextField as DateField, TextField as DatetimeField,\
                         IndexDefinition, Query
-
+from pprint import pprint
 
 class Country(rBasicDocument):
     pass
@@ -48,7 +48,6 @@ if __name__ == "__main__":
     db.country.info()
     db.persona.info()    
 
-    exit(0)
     print("Create some documents")
     
     print(db.country.save(id="ES", description="España"))
@@ -91,11 +90,6 @@ if __name__ == "__main__":
     except Exception as ex:
         print(f"Saving with an invalid key raised an exception: {ex}")
 
-
-    # list personas, refer to RediSearch for query syntax
-    print("\nPersonas tabbed list\n"+'-'*30)
-    print(db.tabbed(db.persona.search("*", sort_by="name").docs))
-
     """
     db.persona.delete('PERSONA/00000002')
     print("persona deleted")
@@ -105,11 +99,14 @@ if __name__ == "__main__":
 
     print("\nCreating some countries...\n"+'-'*30)
     import dataset
-
+    print("Created!")
+    
     # test pagination 
     page=5
-    p=db.country.paginate(query="*", page=page, num=10, sort_by='description', direction=True)
-    print(f"\nDocuments in country, page {page}\n"+'-'*30)
-    print(p.items)
+    num=10
+    p=db.country.paginate(query="*", page=page, num=num, sort_by='description', direction=True)
+    print(f"\nDocuments in country, page {page}: {num} results out of {p.total}\n"+'-'*60)
+
+    pprint(p.items)
 
     exit(0)

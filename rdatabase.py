@@ -504,11 +504,11 @@ class rDatabase(object):
         # return a tablib with all data    
         # print(db.tabbed(persona.search("*", sort_by="apellidos").docs))    
         if len(docs)>0:                        
-            docs=self.docs_to_dict(docs)            
-            keys=[k for k in docs[0].keys()]            
+            # docs=self.docs_to_dict(docs)            
+            keys=[k for k in docs[0]._fields]            
             tab=tablib.Dataset(headers=keys)        
             for p in docs:
-                tab.append(p.values())
+                tab.append(p)
             return tab
         else:
             return ''
