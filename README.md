@@ -114,6 +114,16 @@ if __name__ == "__main__":
     print(f"\nDocuments in country, page {page} of {int(p.total/num)}: {num} results out of {p.total}\n"+'-'*60)
     pprint(p.items)
 
+    print("\nSome searches...")
+    print("\nPersonas whose name starts with 'her'")
+    pprint(db.persona.search(query="her*").docs)
+    print("\nPersonas whose country is ES")
+    pprint(db.persona.search(query=db.k("COUNTRY","ES")).docs)
+    print("\nGet the country Colombia")
+    pprint(db.country.get("COL"))
+    print("\nGet the countries with the exact description Chile")
+    pprint(db.country.search("@description:Chile").docs)
+
     exit(0)
 ```
 
