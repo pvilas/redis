@@ -1,34 +1,32 @@
 # rDatabase - A very lightweight RediSearch interface with foreign keys and input validation
 
-With rDatabase you can **validate**, **save**, **delete**, **query** and **paginate** documents with **Redis**. Moreover, it helps you to maintain the database consistency. It uses the [redisearch](https://oss.redislabs.com/redisearch/) module.
+With rDatabase you can **validate**, **save**, **delete**, **query** and **paginate** documents with [**RediSearch**](https://oss.redislabs.com/redisearch/). Moreover, it helps you to maintain the database **integrity**.
+
+Other facilities are:
+
+* Autodiscover first level of related documents via foreing keys, like in `customer.country.description`.
+* Very easy to integrate with web apps as we use WTForms to define and validate the documents.
 
 
 ```python
 class Country(rBasicDocument):
-    def __init__(self, db):
-        """ a basic document, already has the id and description fields """
-        super().__init__(db, 'COUNTRY')
+    """ A basic document already has members id and description """
+    pass
 
-class Persona(rWTFDocument):
-    class AddForm(Form):
-        """ validation Form for the Persona document """
-        id = StringField('Id', [validators.Length(min=3, max=50), validators.InputRequired()]) 
-        name = StringField('Name', [validators.Length(max=50), validators.InputRequired()]) 
-        country = StringField('Country', [validators.Length(max=50), validators.InputRequired()]) 
+class Persona(rDocument):
+    """ A document type called Persona """
+    class DefDoc(BaseDefDoc):
+        """ Definition of persona using WTForms """        
+        name = StringField('Name', validators=[validators.Length(max=50), validators.InputRequired()], render_kw=dict(indexed=True, on_table=True)) 
+        country = StringField( 'Pais', 
+                                validators=[validators.Length(max=50), validators.InputRequired()], 
+                                render_kw=dict(indexed=True, on_table=True, dependant=True))
 
-    def __init__(self, db):
-        """ refer to RediSearch documentation to know about index definition """
-        super().__init__(db, 'PERSONA', 
-            idx_definition= (                                
-                TextField('id', sortable=True),                
-                TextField('name', sortable=True),             
-                TextField('country', sortable=True) # same name as the referenced document
-                ))
 
 class rTestDatabase(rDatabase):
+    """ our database of documents """
 
     def __init__(self, r):
-        """ create a database with two defined documents and their relationships """
         super().__init__(r)
 
         # create definition documents
@@ -39,44 +37,84 @@ class rTestDatabase(rDatabase):
         # persona has a country
         self.set_fk(self.persona, self.country)
 
-db=rTestDatabase(r)
+if __name__ == "__main__":
 
-print("Validate and save some documents")
-print(db.country.save(id="ES", description="España"))
-print(db.country.save(id="FR", description="Francia"))
-print(db.country.save(id="DE", description="Alemania"))
-print(db.country.save(id="IT", description="Italia"))
+    # create redis conn 
+    r=redis.Redis(
+        host='localhost',
+        decode_responses=True # decode all to utf-8
+    )
 
-print(db.persona.save(name="Manuel", country=db.k("COUNTRY","ES")))
-print(db.persona.save(name="Hermman", country=db.k("COUNTRY","DE")))
-print(db.persona.save(name="Pierre", country=db.k("COUNTRY","FR")))
+    # WARNING!! this will delete all your data
+    # r.flushdb()
 
-"""
-# list some data about persona. Refer RediSearch for query syntax
-for p in db.persona.search("*", sort_by="name").docs:
-    print(p.name, p.country)
-"""
+    db=rTestDatabase(r)
 
-# uncomment next line to raise an exception: the country PP does not exist
-# we cannot create a persona with and unexistent country
-#print(db.persona.save(name="Pere", country=db.k("COUNTRY","PP")))
+    print("\nInformation about documents")
+    db.country.info()
+    db.persona.info()    
 
-# delete country ES -> it will raise an exception because there is more than 
-# zero Persona with this country, we cannot delete it
-#db.country.delete(db.k("COUNTRY", "ES"))
+    print("Create some documents\n")
+    
+    print(db.country.save(id="ES", description="España"))
+    print(db.country.save(id="FR", description="Francia"))
+    print(db.country.save(id="DE", description="Alemania"))
+    print(db.country.save(id="IT", description="Italia"))
+    
+    print(db.persona.save(name="Manuel", country=db.k("COUNTRY","ES")))
+    print(db.persona.save(name="Hermman", country=db.k("COUNTRY","DE")))
+    print(db.persona.save(name="Pierre", country=db.k("COUNTRY","FR")))
 
-# list personas
-print(db.tabbed(db.persona.search("*", sort_by="name").docs))
+    # list some data about persona
+    print("\nList personas, note the description of the country\n"+'-'*50)
+    for p in db.persona.search("*", sort_by="name").docs:        
+        print(p.name, p.country.description)
 
-db.persona.delete('PERSONA/00000002')
-print("persona deleted")
 
-# test pagination 
-# run `python dataset.py` first to create the test dataset
-page=5
-p=db.country.paginate(query="*", page=page, num=10, sort_by='description', direction=True)
-print(f"\nItems of country, page {page}\n"+'-'*30)
-print(p.items)
+    print("\nTesting integrity mechanism...\n")
+
+    # The country PP does not exist -> raise ex
+    try:
+        print("Saving persona with non existent country...")
+        print(db.persona.save(name="Pere", country=db.k("COUNTRY","PP")))
+    except Exception as ex:
+        print(f"Saving with non existent foreign key raised an exception: {ex}")
+
+    # delete a country and try to insert a new persona with it -> it will raise an exception
+    try:        
+        db.country.delete(db.k("COUNTRY", "IT"))
+        print("\nSaving persona with a deleted foreign key...")
+        print(db.persona.save(name="Guiovanni", country=db.k("COUNTRY","IT")))
+    except Exception as ex:
+        print(f"Saving with non existent foreign key raised an exception: {ex}")
+
+    # create a persona with a deliminator and an invalid character in the key -> the key will be sanitized
+    print(f"\nSaving persona with a non-sanitized id  gúg.gg...")
+    print(db.persona.save(id=" gúg.gg", name="Michael", country=db.k("COUNTRY","FR")))
+
+    print(f"\nSaving persona with another non-sanitized id PERSONA. .ñ.xx .yy...")
+    print(db.persona.save(id="PERSONA. .ñ.xx .yy", name="François", country=db.k("COUNTRY","FR")))
+
+    # create a persona with an invalid key -> must raise an exception
+    try:
+        print("\nSaving with an invalid key...")
+        print(db.persona.save(id="PERSONA..", name="Must raise ex", country=db.k("COUNTRY","FR")))
+    except Exception as ex:
+        print(f"Saving with an invalid key raised an exception: {ex}")
+
+    print("\nCreating some countries...\n"+'-'*30)
+    import dataset
+    print("Created!")
+
+    # test pagination 
+    print("\nTesting pagination\n")    
+    page=5
+    num=10
+    p=db.country.paginate(query="*", page=page, num=num, sort_by='description', direction=True)
+    print(f"\nDocuments in country, page {page} of {int(p.total/num)}: {num} results out of {p.total}\n"+'-'*60)
+    pprint(p.items)
+
+    exit(0)
 ```
 
 ## Installation

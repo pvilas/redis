@@ -125,7 +125,7 @@ class rBaseDocument(object):
             pass
 
     def info(self)->str:
-        print(f"{self.prefix} information\n"+'='*30)
+        print(f"\n{self.prefix} information\n"+'='*30)
         print(f"Document members: {[(f.name,f.type) for f in self.DefDoc()]}")
         print(f"Indices: {self.index}")
         print(f"Foreign keys: {self.dependant}")
@@ -368,7 +368,7 @@ class rBaseDocument(object):
             raise rSearchException(str(ex), {'query':query})
 
 
-class rWTFDocument(rBaseDocument):
+class rDocument(rBaseDocument):
     
     class DefDoc(BaseDefDoc):
         pass
@@ -439,7 +439,7 @@ class rWTFDocument(rBaseDocument):
         doc=super().before_save(doc)
         return self.validate(MultiDict(doc))
 
-class rBasicDocument(rWTFDocument):
+class rBasicDocument(rDocument):
     class DefDoc(BaseDefDoc):
         description = StringField( 'Descripción', 
                                    validators = [validators.Length(max=50), validators.InputRequired()],
@@ -461,7 +461,7 @@ class rDatabase(object):
         self.dependants=[]
         self.delim='.' # do not use {:, /, #, ?} or anything related with url encoding
 
-    def set_fk(self, definition:rWTFDocument, depends_of: rWTFDocument)->None:
+    def set_fk(self, definition:rDocument, depends_of: rDocument)->None:
         self.dependants.append((definition, depends_of))
         definition.dependant.append(type(depends_of).__name__.upper())        
 

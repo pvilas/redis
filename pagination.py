@@ -1,13 +1,8 @@
 from math import ceil
 
 class Pagination(object):
-    """Internal helper class returned by :meth:`BaseQuery.paginate`.  You
-    can also construct it from any other SQLAlchemy query object if you are
-    working with other libraries.  Additionally it is possible to pass `None`
-    as query object in which case the :meth:`prev` and :meth:`next` will
-    no longer work.
-
-    Taken form
+    """ An html pagination object 
+    Adapted form
     https://github.com/pallets/flask-sqlalchemy/blob/master/src/flask_sqlalchemy/__init__.py
     """
 
@@ -50,7 +45,7 @@ class Pagination(object):
     def next(self, error_out=False):
         """Returns a :class:`Pagination` object for the next page."""
         pass
-    
+
     @property
     def has_next(self):
         """True if a next page exists."""
@@ -64,27 +59,7 @@ class Pagination(object):
         return self.page + 1
 
     def iter_pages(self, left_edge=2, left_current=2, right_current=5, right_edge=2):
-        """Iterates over the page numbers in the pagination.  The four
-        parameters control the thresholds how many numbers should be produced
-        from the sides.  Skipped page numbers are represented as `None`.
-        This is how you could render such a pagination in the templates:
-        .. sourcecode:: html+jinja
-            {% macro render_pagination(pagination, endpoint) %}
-              <div class=pagination>
-              {%- for page in pagination.iter_pages() %}
-                {% if page %}
-                  {% if page != pagination.page %}
-                    <a href="{{ url_for(endpoint, page=page) }}">{{ page }}</a>
-                  {% else %}
-                    <strong>{{ page }}</strong>
-                  {% endif %}
-                {% else %}
-                  <span class=ellipsis>…</span>
-                {% endif %}
-              {%- endfor %}
-              </div>
-            {% endmacro %}
-        """
+        """ See `paginate.jinja`for an example """
         last = 0
         for num in range(1, self.pages + 1):
             if (
