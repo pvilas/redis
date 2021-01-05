@@ -1,5 +1,5 @@
 import redis
-from rdatabase import rBasicDocument, rDocument, rDatabase, BaseDefDoc
+from rdatabase import BasicDocument, Document, rDatabase, BaseDefinition
 from loguru import logger
 from wtforms import Form, BooleanField, StringField, HiddenField, validators
 from redisearch import Client, TextField, NumericField,\
@@ -7,11 +7,11 @@ from redisearch import Client, TextField, NumericField,\
                         IndexDefinition, Query
 from pprint import pprint
 
-class Country(rBasicDocument):
+class Country(BasicDocument):
     pass
 
-class Persona(rDocument):
-    class DefDoc(BaseDefDoc):        
+class Persona(Document):
+    class Definition(BaseDefinition):        
         name = StringField('Name', validators=[validators.Length(max=50), validators.InputRequired()], render_kw=dict(indexed=True, on_table=True)) 
         country = StringField( 'Pais', 
                                 validators=[validators.Length(max=50), validators.InputRequired()], 
@@ -41,7 +41,7 @@ if __name__ == "__main__":
     )
 
     # WARNING!! this will delete all your data
-    r.flushdb()
+    #r.flushdb()
 
     db=rTestDatabase(r)
 

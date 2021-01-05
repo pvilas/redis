@@ -1,23 +1,23 @@
 # rDatabase - A very lightweight RediSearch interface with foreign keys and input validation
 
-With rDatabase you can **validate**, **save**, **delete**, **query** and **paginate** documents with [**RediSearch**](https://oss.redislabs.com/redisearch/). Moreover, it helps you to maintain the database **integrity**.
+With rDatabase you can **validate**, **save**, **delete**, **query** and **paginate** documents. Moreover, it helps you to maintain the database **integrity**.  It uses the [**RediSearch**](https://oss.redislabs.com/redisearch/) module.
 
 Other facilities are:
 
 - Autodiscover first level of related documents via foreing keys, like in `customer.country.description`.
-- Very easy to integrate with web apps as we use WTForms to define and validate the documents.
+- Very easy to integrate with web apps as it uses WTForms to define and validate the documents.
 
 ```python
-class Country(rBasicDocument):
-    """ A basic document already has members id and description """
+class Country(BasicDocument):
+    """ A basic document already has and id and a description fields """
     pass
 
-class Persona(rDocument):
+class Persona(Document):
     """ A document type called Persona """
-    class DefDoc(BaseDefDoc):
+    class Definition(BaseDefinition):
         """ Definition of persona using WTForms """
-        name = StringField('Name', validators=[validators.Length(max=50), validators.InputRequired()], render_kw=dict(indexed=True, on_table=True))
-        country = StringField( 'Pais',
+        name = StringField( label='Name', validators=[validators.Length(max=50), validators.InputRequired()], render_kw=dict(indexed=True, on_table=True))
+        country = StringField( label='Country',
                                 validators=[validators.Length(max=50), validators.InputRequired()],
                                 render_kw=dict(indexed=True, on_table=True, dependant=True))
 
@@ -55,11 +55,13 @@ if __name__ == "__main__":
 
     print("Create some documents\n")
 
+    # we provide the document id
     print(db.country.save(id="ES", description="España"))
     print(db.country.save(id="FR", description="Francia"))
     print(db.country.save(id="DE", description="Alemania"))
     print(db.country.save(id="IT", description="Italia"))
 
+    # the document id is auto-created
     print(db.persona.save(name="Manuel", country=db.k("COUNTRY","ES")))
     print(db.persona.save(name="Hermman", country=db.k("COUNTRY","DE")))
     print(db.persona.save(name="Pierre", country=db.k("COUNTRY","FR")))
@@ -68,7 +70,6 @@ if __name__ == "__main__":
     print("\nList personas, note the description of the country\n"+'-'*50)
     for p in db.persona.search("*", sort_by="name").docs:
         print(p.name, p.country.description)
-
 
     print("\nTesting integrity mechanism...\n")
 
@@ -136,15 +137,73 @@ Run test
 
 `python test.py`
 
-## Delimitator
+## Document id and key
 
-In **rDatabase** the key and the mandatory id of the document are the same.
+All the docuents are stored as hashs. The key of the hash and the id of the document is always the same. If you dont provide an id, **rDatabase** will create one using an autoincremented value. The key and the id is compound by `class_name+delimitator+id`. The `class_name+delimitator` is always prefixed to all ids if you do not provide it. This is true in the `get` and `save` operations.
 
-If you are thinking on using the database with a web app, it could be better not to use http-related characters like `{?, :, /, #, ...}` as a separator. The reason is that you would use the id of the document in your http querys (as in `http://something.com/products/id_of_the_product`) and these characters will interfere if you dont encode it.
+To recover a single document you can use `get` with the id, that calls [`hgetall`](https://redis.io/commands/hgetall) or perform a search like `search(query="@id:class_name.id")`. In the first case, `hgetall` is extremelly fast, the second case is already fast but uses the redisearch module.
 
-It is far better use something like `{., -, _, }`.
+## Document format
 
-The default delimitator is `.`.
+To save a document, use a dict with simple values (strings, integer or float) like:
+
+```python
+country.save({'id': 'BEL', 'description':'Belgium'})
+> COUNTRY.BEL
+```
+
+or
+
+```python
+country.save(id='SVN', description='Slovenia')
+> COUNTRY.SVN
+```
+
+To recover documents use `get`, `search` or `paginate`. `get` return a single dict like
+
+```python
+country.get("RUS")
+> {'id': 'RUS', 'description':'Russia'}
+```
+
+whereas `search` or `paginate` return a list of dicts,
+
+```python
+country.search(query="R*").total
+> 4
+country.search(query="R*").docs
+> [{'id': 'REU', 'description':'Réunion'},
+{'id': 'ROU', 'description':'Romania'},
+{'id': 'RUS', 'description':'Russian Federation'},
+{'id': 'RWA', 'description':'Rwanda'}]
+```
+
+In fact, the returned dicts are [DotMap](https://github.com/drgrib/dotmap) so you can access the data with dot syntax.
+
+## Search documents
+
+It is done via the `search`or `paginate` procedures. Check the [RediSearch](https://oss.redislabs.com/redisearch/master/Query_Syntax/) documentation for the syntax of the query. The signature of `search` is 
+
+```python
+def search(self, query:str, start:int=0, num:int=10, sort_by:str='id', direction:bool=True, slop=0)->list:
+```
+
+## Document definition
+
+We define the document using a subclass named Definition inside the document declaration. The Definition has the fields (or members) of the document. BaseDefinition is, in fact, a [WTForm](https://wtforms.readthedocs.io/en/stable/forms/) with a field called id.
+
+```python
+class Persona(Document):
+    """ A document type called Persona """
+    class Definition(BaseDefinition):
+        """ Definition of persona using WTForms """
+        name = StringField( label='Name', validators=[validators.Length(max=50), validators.InputRequired()], render_kw=dict(indexed=True, on_table=True))
+        country = StringField( label='Country',
+                                validators=[validators.Length(max=50), validators.InputRequired()],
+                                render_kw=dict(indexed=True, on_table=True, dependant=True))
+```
+
+It is worth to say that the document declaration is only a template to **validate** the input dict. When you recover a document, you recover a dict, not a document object. In same way, when you save a document, you are saving the dict that you pass with save, not the object itself.
 
 ## Index service
 
@@ -152,20 +211,25 @@ The document index is build according the definition the first time that a docum
 
 ### Index definition
 
-You define the index in the docuent declaration as in:
+You define the index in the Definition declaration of the Document as in:
 
 ```python
-class Persona(rWTFDocument):
-    def __init__(self, db):
-        super().__init__(db, 'PERSONA',
-            idx_definition= (
-                TextField('id', sortable=True),
-                TextField('name', sortable=True),
-                TextField('country', sortable=True) # same name as the referenced document
-                ))
+class Persona(Document):
+    class Definition(BaseDefinition):        
+        name = StringField( label='Name', 
+                            validators=[ validators.Length(max=50), 
+                                         validators.InputRequired()], 
+                            render_kw=dict(indexed=True, on_table=True)) 
+
+        country = StringField( label='Country', 
+                               validators=[ validators.Length(max=50), 
+                                            validators.InputRequired()], 
+                               render_kw=dict(indexed=True, on_table=True, dependant=True))
 ```
 
-And the index is build when you instantiate for the first time the document, as in:
+You can notice the `indexed` value in the render_kw. Also note that country is `dependant` of another document those type is called Country (via the name of the field, dont be confused with the label property).
+
+The index is build when you instantiate for the first time a document of this type, as in:
 
 ```python
 class rTestDatabase(rDatabase):

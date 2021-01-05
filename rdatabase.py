@@ -50,18 +50,18 @@ class rAfterDeleteException(rDocumentException):
 class rSearchException(rDocumentException):
     pass
 
-class BaseDefDoc(Form):
+class BaseDefinition(Form):
     """ The minimun definition template for a document """    
     id = StringField( 'Id', 
                        validators=[validators.Length(min=2, max=50), validators.InputRequired()],
                        render_kw=dict(indexed=True, on_table=False)
     ) 
 
-class rBaseDocument(object):
+class BaseDocument(object):
     is_redis:bool=True
     query:str="*" # the default search string for this document
 
-    class DefDoc(BaseDefDoc):
+    class Definition(BaseDefinition):
         # definition template for this document
         pass
 
@@ -98,7 +98,7 @@ class rBaseDocument(object):
         self.dependant=[] # fields that depends of a foreign key
         self.index=[] # list of index field names        
         logger.debug(f"Members of document type {self.prefix}")
-        for field in self.DefDoc():
+        for field in self.Definition():
             logger.debug(f"{field.name}({field.type}): {field.render_kw}")            
             if field.render_kw:
                 # include field in index
@@ -122,7 +122,7 @@ class rBaseDocument(object):
 
     def info(self)->str:
         print(f"\n{self.prefix} information\n"+'='*30)
-        print(f"Document members: {[(f.name,f.type) for f in self.DefDoc()]}")
+        print(f"Document members: {[(f.name,f.type) for f in self.Definition()]}")
         print(f"Indices: {self.index}")
         print(f"Foreign keys: {self.dependant}")
         l=[]
@@ -130,6 +130,7 @@ class rBaseDocument(object):
             if b.prefix==self.prefix:
                 l.append(a.prefix)
         print(f"Documents that depend of this document: {l}")
+        print(f"Number of documents: {self.search('*').total}")
         print("")
 
     def k(self, id:str)->str:
@@ -359,12 +360,12 @@ class rBaseDocument(object):
             raise rSearchException(str(ex), {'query':query})
 
 
-class rDocument(rBaseDocument):
+class Document(BaseDocument):
     
-    class DefDoc(BaseDefDoc):
+    class Definition(BaseDefinition):
         pass
          
-    class AddForm(DefDoc):
+    class AddForm(Definition):
         pass
 
     class EditForm(AddForm):
@@ -399,7 +400,7 @@ class rDocument(rBaseDocument):
 
         # create the addform with the doc
         try:
-            form_obj=use_form or self.DefDoc
+            form_obj=use_form or self.Definition
             form=form_obj(doc)            
             if form.validate():
                 doc=form.data
@@ -430,13 +431,13 @@ class rDocument(rBaseDocument):
         doc=super().before_save(doc)
         return self.validate(MultiDict(doc))
 
-class rBasicDocument(rDocument):
-    class DefDoc(BaseDefDoc):
+class BasicDocument(Document):
+    class Definition(BaseDefinition):
         description = StringField( 'Descripción', 
                                    validators = [validators.Length(max=50), validators.InputRequired()],
                                    render_kw=dict(indexed=True, on_table=True)) 
 
-    class DeleteForm(DefDoc):
+    class DeleteForm(Definition):
         id = HiddenField()        
         description = StringField('Descripción', render_kw={'readonly':True}) 
 
@@ -452,7 +453,7 @@ class rDatabase(object):
         self.dependants=[]
         self.delim='.' # do not use {:, /, #, ?} or anything related with url encoding
 
-    def set_fk(self, definition:rDocument, depends_of: rDocument)->None:
+    def set_fk(self, definition:Document, depends_of: Document)->None:
         self.dependants.append((definition, depends_of))
         definition.dependant.append(type(depends_of).__name__.upper())        
 
