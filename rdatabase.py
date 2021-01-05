@@ -23,6 +23,9 @@ class rDocumentException(Exception):
 class rValidationException(rDocumentException):
     pass
 
+class rTypeException(rDocumentException):
+    pass
+
 class rSaveException(rDocumentException):
     pass
 
@@ -57,6 +60,7 @@ class BaseDefinition(Form):
                        render_kw=dict(indexed=True, on_table=False)
     ) 
 
+
 class BaseDocument(object):
     is_redis:bool=True
     query:str="*" # the default search string for this document
@@ -88,9 +92,6 @@ class BaseDocument(object):
             prefix=type(self).__name__.upper()
         self.prefix=prefix.upper()
         self.idx=Client(f"idx{self.db.delim}{self.prefix}", conn=db.r)
-
-        # discover the first level of foreign keys and include it into the results
-        self.discover=True 
 
         # build index list for RediSearch and columns for an html table of the data
         index=[]
@@ -144,7 +145,7 @@ class BaseDocument(object):
         """
         p=self.db.r.hgetall(self.sanitize(id))
         if p:
-            return DotMap(self.db.r.hgetall(self.sanitize(id)))
+            return DotMap(self.discover(p))
         else:
             return None
 
@@ -178,9 +179,27 @@ class BaseDocument(object):
 
             ## Return            
             The checked, sanitized doc
-        """                
-        self.validate_foreigns(doc)
-        return doc        
+        """
+        # check if all members of the doc are string, int or float
+        new_doc={}
+        try:        
+            for k, v in doc.items():
+                # print(f"type of {k} is {type(v).__name__}")
+                # if it is a DotMap, only include the id or None
+                t=type(v).__name__
+                if t in('DotMap', 'dict'):
+                    new_doc[k]=v.get('id', None)
+                elif t in ('int', 'str', 'NoneType') :
+                    new_doc[k]=v
+                elif t in ('Arrow', 'datetime', 'date', 'time'):
+                    new_doc[k]=str(arrow.get(v)) # normalize to iso
+                else:
+                    new_doc[k]=str(v)
+        except Exception as ex:
+            raise rTypeException(f"Error checkin datatypes, only str, int or float allowed: {ex}")
+        # print(f"The sanitized document is {new_doc}")
+        self.validate_foreigns(new_doc)
+        return new_doc
 
     def sanitize(self, id:str)->str:
         """ Sanitize and id before use it 
@@ -214,7 +233,7 @@ class BaseDocument(object):
         """
         return None
 
-    def save(self, **doc:dict)->str:        
+    def save(self, **doc:dict)->str:                
         try:
             # if there isn't an id field, create and populate it
             if doc.get('id', None) is None: 
@@ -300,6 +319,20 @@ class BaseDocument(object):
             raise rDeleteException(ex, {'id':id})
         self.after_delete(id)        
 
+
+    def discover(self, doc: dict)->DotMap:
+        """ discover first level foreign keys and include the result into the dict """        
+        n={}
+        # for each member of the doc
+        for k, v in doc.items():                        
+            # if this field is dependant
+            if k.upper() in self.dependant: 
+                # include a get of the foreign key as member_name.data                
+                n[k]=DotMap(self.db.r.hgetall(v))
+            else:
+                n[k]=v                      
+        return DotMap(n)
+
     def search(self, query:str, start:int=0, num:int=10, sort_by:str='id', direction:bool=True, slop=0)->list:
         """ perform a query with the index
             ## Param
@@ -317,25 +350,16 @@ class BaseDocument(object):
         try:            
             q=Query(query).slop(slop).sort_by(sort_by, direction).paging(start, num)
             result=self.idx.search(q)
-            if not self.discover or len(self.dependant)==0:
+            if len(self.dependant)==0:
                 return result
             # discover first level foreign keys
             docs=result.docs
             if result.total>0 and len(self.dependant)>0:
                 docs_with_discover=[] # new list of docs
-                # for each document
+                # for each document                
                 for doc in self.db.docs_to_dict(result.docs):
-                    n={}
-                    # for each member of the doc
-                    for k, v in doc.items():                        
-                        # if this field is dependant
-                        if k.upper() in self.dependant: 
-                            # include a get of the foreign key as member_name.data
-                            n[k]=DotMap(self.db.r.hgetall(v))
-                        else:
-                            n[k]=v                      
-                    # append to the list of new docs   
-                    docs_with_discover.append(DotMap(n))
+                    # append to the list of new docs                       
+                    docs_with_discover.append(self.discover(doc))
                 docs=docs_with_discover
             # return the result as a resisearch result            
             return DotMap(total=result.total, docs=docs)

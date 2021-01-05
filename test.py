@@ -6,6 +6,9 @@ from redisearch import Client, TextField, NumericField,\
                         TextField as DateField, TextField as DatetimeField,\
                         IndexDefinition, Query
 from pprint import pprint
+import arrow
+from datetime import datetime
+from dotmap import DotMap
 
 class Country(BasicDocument):
     pass
@@ -41,7 +44,7 @@ if __name__ == "__main__":
     )
 
     # WARNING!! this will delete all your data
-    #r.flushdb()
+    r.flushdb()
 
     db=rTestDatabase(r)
 
@@ -55,16 +58,17 @@ if __name__ == "__main__":
     print(db.country.save(id="FR", description="Francia"))
     print(db.country.save(id="DE", description="Alemania"))
     print(db.country.save(id="IT", description="Italia"))
-    
+    print(db.country.save(id="FI", description="Finlándia"))
+
     print(db.persona.save(name="Manuel", country=db.k("COUNTRY","ES")))
     print(db.persona.save(name="Hermman", country=db.k("COUNTRY","DE")))
     print(db.persona.save(name="Pierre", country=db.k("COUNTRY","FR")))
+    print(db.persona.save(name="Linux", country=db.k("COUNTRY","FI")))
 
     # list some data about persona
     print("\nList personas, note the description of the country\n"+'-'*50)
     for p in db.persona.search("*", sort_by="name").docs:        
         print(p.name, p.country.description)
-
 
     print("\nTesting integrity mechanism...\n")
 
@@ -109,7 +113,7 @@ if __name__ == "__main__":
     print(f"\nDocuments in country, page {page} of {int(p.total/num)}: {num} results out of {p.total}\n"+'-'*60)
     pprint(p.items)
 
-    print("\nSome searches...")
+    print("\nSome searches...\n"+'-'*30)
     print("\nPersonas whose name starts with 'her'")
     pprint(db.persona.search(query="her*").docs)
     print("\nPersonas whose country is ES")
@@ -118,5 +122,17 @@ if __name__ == "__main__":
     pprint(db.country.get("COL"))
     print("\nGet the countries with the exact description Chile")
     pprint(db.country.search("@description:Chile").docs)
+
+
+    print("\nUpdate documents\n"+'-'*30)
+    print("Find out a persona named Linux\n")
+    l=db.persona.search(query="Linux").docs[0]    
+    pprint(l)
+    print("\nUps.... The name is mispelled. Correcting to Linus ...\n")
+    l.name="Linus"
+    k=db.persona.save(**l)
+    # save always return the id of the saved document
+    print("The updated document is")
+    pprint(db.persona.get(k))
 
     exit(0)

@@ -4,8 +4,10 @@ With rDatabase you can **validate**, **save**, **delete**, **query** and **pagin
 
 Other facilities are:
 
-- Autodiscover first level of related documents via foreing keys, like in `customer.country.description`.
+- Autodiscovering of first level of related documents via foreing keys, like in `customer.country.description`.
 - Very easy to integrate with web apps as it uses WTForms to define and validate the documents.
+
+**rDatabase** is not an object database in the traditional sense, it is only a thiny layer over Redis to facilitate the working with dictionaries.
 
 ```python
 class Country(BasicDocument):
@@ -145,7 +147,7 @@ To recover a single document you can use `get` with the id, that calls [`hgetall
 
 ## Document format
 
-To save a document, use a dict with simple values (strings, integer or float) like:
+**rDatabase** only uses dictionaries to operate. To save a document, use a dict with simple values (strings, integer or float) like:
 
 ```python
 country.save({'id': 'BEL', 'description':'Belgium'})
@@ -178,7 +180,7 @@ country.search(query="R*").docs
 {'id': 'RWA', 'description':'Rwanda'}]
 ```
 
-In fact, the returned dicts are [DotMap](https://github.com/drgrib/dotmap) so you can access the data with dot syntax.
+In fact, the returned dicts are [DotMap](https://github.com/drgrib/dotmap) so you can access the data with dot syntax!.
 
 ## Search documents
 
