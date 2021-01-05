@@ -1,10 +1,8 @@
 import redis
 from datetime import datetime
-from collections.abc import MutableMapping
 import random
 import string
 import time
-import binascii
 from redisearch import Client, TextField, NumericField,\
                         TextField as DateField, TextField as DatetimeField,\
                         IndexDefinition, Query
@@ -12,10 +10,8 @@ import arrow
 from loguru import logger
 from wtforms import Form, BooleanField, StringField, HiddenField, validators
 from werkzeug.datastructures import MultiDict
-import tablib
 from pagination import Pagination
-import inspect
-from collections import namedtuple
+from dotmap import DotMap
 
 ver="0.5"
 
@@ -140,18 +136,14 @@ class rBaseDocument(object):
         """ return a complete id: name+delim+id """
         return self.sanitize(id)
 
-    def dict_to_namedtuple(self, p:dict, pref:str=None)->namedtuple:
-        named=namedtuple(pref or self.prefix, p.keys())
-        return named(**p)         
-
-    def get(self, id:str)->namedtuple:
+    def get(self, id:str)->DotMap:
         """ return a document or None 
             ## Param
             * id - is the full id 
         """
         p=self.db.r.hgetall(self.sanitize(id))
         if p:
-            return self.dict_to_namedtuple(self.db.r.hgetall(self.sanitize(id)))
+            return DotMap(self.db.r.hgetall(self.sanitize(id)))
         else:
             return None
 
@@ -338,15 +330,14 @@ class rBaseDocument(object):
                         # if this field is dependant
                         if k.upper() in self.dependant: 
                             # include a get of the foreign key as member_name.data
-                            n[k]=self.dict_to_namedtuple(self.db.r.hgetall(v), k.upper())
+                            n[k]=DotMap(self.db.r.hgetall(v))
                         else:
                             n[k]=v                      
                     # append to the list of new docs   
-                    docs_with_discover.append(self.dict_to_namedtuple(n))
+                    docs_with_discover.append(DotMap(n))
                 docs=docs_with_discover
-            # return the result as a resisearch result
-            r=namedtuple('documents', ['total', 'docs'])
-            return r(total=result.total, docs=docs)
+            # return the result as a resisearch result            
+            return DotMap(total=result.total, docs=docs)
         except Exception as ex:
             raise rSearchException(str(ex), {'query':query})
     
@@ -499,16 +490,3 @@ class rDatabase(object):
                 fields.update({ field : getattr(doc, field) })            
             reslist.append(fields)
         return reslist
-
-    def tabbed(self, docs:list)->str:
-        # return a tablib with all data    
-        # print(db.tabbed(persona.search("*", sort_by="apellidos").docs))    
-        if len(docs)>0:                        
-            # docs=self.docs_to_dict(docs)            
-            keys=[k for k in docs[0]._fields]            
-            tab=tablib.Dataset(headers=keys)        
-            for p in docs:
-                tab.append(p)
-            return tab
-        else:
-            return ''

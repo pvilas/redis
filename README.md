@@ -4,9 +4,8 @@ With rDatabase you can **validate**, **save**, **delete**, **query** and **pagin
 
 Other facilities are:
 
-* Autodiscover first level of related documents via foreing keys, like in `customer.country.description`.
-* Very easy to integrate with web apps as we use WTForms to define and validate the documents.
-
+- Autodiscover first level of related documents via foreing keys, like in `customer.country.description`.
+- Very easy to integrate with web apps as we use WTForms to define and validate the documents.
 
 ```python
 class Country(rBasicDocument):
@@ -16,10 +15,10 @@ class Country(rBasicDocument):
 class Persona(rDocument):
     """ A document type called Persona """
     class DefDoc(BaseDefDoc):
-        """ Definition of persona using WTForms """        
-        name = StringField('Name', validators=[validators.Length(max=50), validators.InputRequired()], render_kw=dict(indexed=True, on_table=True)) 
-        country = StringField( 'Pais', 
-                                validators=[validators.Length(max=50), validators.InputRequired()], 
+        """ Definition of persona using WTForms """
+        name = StringField('Name', validators=[validators.Length(max=50), validators.InputRequired()], render_kw=dict(indexed=True, on_table=True))
+        country = StringField( 'Pais',
+                                validators=[validators.Length(max=50), validators.InputRequired()],
                                 render_kw=dict(indexed=True, on_table=True, dependant=True))
 
 
@@ -39,7 +38,7 @@ class rTestDatabase(rDatabase):
 
 if __name__ == "__main__":
 
-    # create redis conn 
+    # create redis conn
     r=redis.Redis(
         host='localhost',
         decode_responses=True # decode all to utf-8
@@ -52,22 +51,22 @@ if __name__ == "__main__":
 
     print("\nInformation about documents")
     db.country.info()
-    db.persona.info()    
+    db.persona.info()
 
     print("Create some documents\n")
-    
+
     print(db.country.save(id="ES", description="España"))
     print(db.country.save(id="FR", description="Francia"))
     print(db.country.save(id="DE", description="Alemania"))
     print(db.country.save(id="IT", description="Italia"))
-    
+
     print(db.persona.save(name="Manuel", country=db.k("COUNTRY","ES")))
     print(db.persona.save(name="Hermman", country=db.k("COUNTRY","DE")))
     print(db.persona.save(name="Pierre", country=db.k("COUNTRY","FR")))
 
     # list some data about persona
     print("\nList personas, note the description of the country\n"+'-'*50)
-    for p in db.persona.search("*", sort_by="name").docs:        
+    for p in db.persona.search("*", sort_by="name").docs:
         print(p.name, p.country.description)
 
 
@@ -81,7 +80,7 @@ if __name__ == "__main__":
         print(f"Saving with non existent foreign key raised an exception: {ex}")
 
     # delete a country and try to insert a new persona with it -> it will raise an exception
-    try:        
+    try:
         db.country.delete(db.k("COUNTRY", "IT"))
         print("\nSaving persona with a deleted foreign key...")
         print(db.persona.save(name="Guiovanni", country=db.k("COUNTRY","IT")))
@@ -106,8 +105,8 @@ if __name__ == "__main__":
     import dataset
     print("Created!")
 
-    # test pagination 
-    print("\nTesting pagination\n")    
+    # test pagination
+    print("\nTesting pagination\n")
     page=5
     num=10
     p=db.country.paginate(query="*", page=page, num=num, sort_by='description', direction=True)
@@ -131,11 +130,11 @@ if __name__ == "__main__":
 
 Be sure you have python>=3.7 with `python -V`, clone the project and
 
-```pip install -r requirements.txt```
+`pip install -r requirements.txt`
 
 Run test
 
-```python test.py```
+`python test.py`
 
 ## Delimitator
 
@@ -147,10 +146,9 @@ It is far better use something like `{., -, _, }`.
 
 The default delimitator is `.`.
 
-
 ## Index service
 
-The document index is build according the definition the first time that a document is instantiated. The subsequent changes, like add or remove fields from the index are not serviced. 
+The document index is build according the definition the first time that a document is instantiated. The subsequent changes, like add or remove fields from the index are not serviced.
 
 ### Index definition
 
@@ -158,11 +156,11 @@ You define the index in the docuent declaration as in:
 
 ```python
 class Persona(rWTFDocument):
-    def __init__(self, db):        
-        super().__init__(db, 'PERSONA', 
-            idx_definition= (                                
-                TextField('id', sortable=True),                
-                TextField('name', sortable=True),             
+    def __init__(self, db):
+        super().__init__(db, 'PERSONA',
+            idx_definition= (
+                TextField('id', sortable=True),
+                TextField('name', sortable=True),
                 TextField('country', sortable=True) # same name as the referenced document
                 ))
 ```
@@ -185,18 +183,17 @@ One solution is to delete manually the index with `> FT.DROPINDEX idx_name` and 
 
 If your database is in production, instead of deleting the index, it could be better to write manually the changes with [ft.alter schema add](https://oss.redislabs.com/redisearch/Commands/#ftalter_schema_add). You can get a report of the indices with `> FT._LIST` and information with`> FT.INFO idx_name`.
 
-
 ### Jinja html paginator example
 
 To use the paginator, include `paginate.jinja` in your project and call it from your template with the paginator object as `{{render_pagination(p)}}`.
 
 ## Redis and RediSearch
 
-#### Install redisearch package
+### Install redisearch package
 
-```pip install redisearch```
+`pip install redisearch`
 
-#### Install Redis on OSX
+### Install Redis on OSX
 
 ```sh
 brew install redis
@@ -207,30 +204,30 @@ Compile the RediSearch module (note the **recursive** param):
 ```sh
 brew install cmake
 cd $HOME/src
-git clone --recursive https://github.com/RediSearch/RediSearch.git 
+git clone --recursive https://github.com/RediSearch/RediSearch.git
 cd RediSearch
 make
 ```
 
 Copy the module at `/usr/local/etc`:
 
-```cp build/redisearch.so /usr/local/etc```
+`cp build/redisearch.so /usr/local/etc`
 
 Add the loadmodule to conf:
 
-```echo "loadmodule /usr/local/etc/redisearch.so" >> /usr/local/etc/redis.conf```
+`echo "loadmodule /usr/local/etc/redisearch.so" >> /usr/local/etc/redis.conf`
 
 Start redis:
 
-```brew services start redis```
+`brew services start redis`
 
 Check for the search module:
 
-```redis-cli module list```
+`redis-cli module list`
 
 If you don't want/need a background service you can just run:
 
-```redis-server /usr/local/etc/redis.conf```
+`redis-server /usr/local/etc/redis.conf`
 
 Executables can be found at:
 
