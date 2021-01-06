@@ -26,10 +26,13 @@ class rValidationException(rDocumentException):
 class rTypeException(rDocumentException):
     pass
 
+class rUniqueException(rDocumentException):
+    pass
+
 class rSaveException(rDocumentException):
     pass
 
-class rFKNotExists(rDocumentException):
+class rFKNotExistsException(rDocumentException):
     pass
 
 class rDeleteException(rDocumentException):
@@ -98,6 +101,7 @@ class BaseDocument(object):
         self.columns=[] # list to columns to appear in an auto generated html table
         self.dependant=[] # fields that depends of a foreign key
         self.index=[] # list of index field names        
+        self.uniques=[] # list of fields that must be uniques
         logger.debug(f"Members of document type {self.prefix}")
         for field in self.Definition():
             logger.debug(f"{field.name}({field.type}): {field.render_kw}")            
@@ -112,6 +116,15 @@ class BaseDocument(object):
                 # include field in html table columns
                 if field.render_kw.get('on_table', False):
                     self.columns.append(field.name)
+                # the field has unique values
+                if field.render_kw.get('unique', False):
+                    self.uniques.append(field.name) # append to uniques
+                    if not field.name in self.index: # append to index list
+                        self.index.append(field.name)
+                        if field.type in ('DecimalField', 'FloatField', 'IntegerField'):
+                            index.append(NumericField(field.name, sortable=True))                    
+                        else:
+                            index.append(TextField(field.name, sortable=True))                     
 
         # build index 
         try:
@@ -122,7 +135,8 @@ class BaseDocument(object):
             pass
 
     def info(self)->str:
-        print(f"\n{self.prefix} information\n"+'='*30)
+        s=f"{self.prefix} information"
+        print(f"\n{s}\n"+'='*len(s))
         print(f"Document members: {[(f.name,f.type) for f in self.Definition()]}")
         print(f"Indices: {self.index}")
         print(f"Foreign keys: {self.dependant}")
@@ -131,6 +145,7 @@ class BaseDocument(object):
             if b.prefix==self.prefix:
                 l.append(a.prefix)
         print(f"Documents that depend of this document: {l}")
+        print(f"Unique members: {self.uniques}")
         print(f"Number of documents: {self.search('*').total}")
         print("")
 
@@ -145,7 +160,7 @@ class BaseDocument(object):
         """
         p=self.db.r.hgetall(self.sanitize(id))
         if p:
-            return DotMap(self.discover(p))
+            return DotMap(self.unescape_doc(self.discover(p)))
         else:
             return None
 
@@ -153,18 +168,37 @@ class BaseDocument(object):
         """ Called before save.
             Check if the object has the mandatory foreign fields and their values exists on the referenced document.
 
+            Also check the uniqueness of unique fields
+
             ## Param 
             * doc - the dict to be saved in the document
 
             ## Exceptions
-            rFKNotExists
+            rFKNotExists, rUnique
         """
         for d, f in self.db.dependants:            
             if d.prefix==self.prefix:
                 if doc.get(f.prefix.lower()) is None:
-                    raise rFKNotExists(f"The member {f.prefix.lower()} of {self.prefix} does not exist in the document.", doc)
+                    raise rFKNotExistsException(f"The member {f.prefix.lower()} of {self.prefix} does not exist in the document.", doc)
                 if not self.db.r.exists(doc.get(f.prefix.lower())):
-                    raise rFKNotExists(f"The member {d.prefix}.{f.prefix.lower()}, with value {doc.get(f.prefix.lower())}, does not exist as a foreign key of {f.prefix.upper()}", doc)
+                    raise rFKNotExistsException(f"The member {d.prefix}.{f.prefix.lower()}, with value {doc.get(f.prefix.lower())}, does not exist as a foreign key of {f.prefix.upper()}", doc)
+        
+        # test uniqueness
+        for d in self.uniques:
+            q=f"@{d}:\"{doc.get(d)}\""            
+            if doc.get(d) and self.search(q).total>0:
+                print(f"testing uniqueness of {d} by searching {q}")
+                raise rUniqueException(f"Value {doc.get(d)} already exists in document {self.prefix}, member {d}")
+
+    def escape_doc(self, doc:dict)->dict:
+        """ qescape all str fields """
+        esc_doc={}
+        for k, v in doc.items():
+            if type(v).__name__=='str':
+                esc_doc[k]=self.db.qescape(v)
+            else:
+                esc_doc[k]=v
+        return esc_doc
 
     def before_save(self, doc:dict)->dict:
         """ Check, sanitize, etc... 
@@ -180,6 +214,7 @@ class BaseDocument(object):
             ## Return            
             The checked, sanitized doc
         """
+        # 1. check types and escape strings
         # check if all members of the doc are string, int or float
         new_doc={}
         try:        
@@ -189,15 +224,18 @@ class BaseDocument(object):
                 t=type(v).__name__
                 if t in('DotMap', 'dict'):
                     new_doc[k]=v.get('id', None)
-                elif t in ('int', 'str', 'NoneType') :
+                elif t in ('int', 'NoneType') :
                     new_doc[k]=v
+                elif t in ('str',):
+                    new_doc[k]=self.db.qescape(v)
                 elif t in ('Arrow', 'datetime', 'date', 'time'):
                     new_doc[k]=str(arrow.get(v)) # normalize to iso
                 else:
                     new_doc[k]=str(v)
         except Exception as ex:
             raise rTypeException(f"Error checkin datatypes, only str, int or float allowed: {ex}")
-        # print(f"The sanitized document is {new_doc}")
+        
+        # 2. validate fks
         self.validate_foreigns(new_doc)
         return new_doc
 
@@ -233,7 +271,12 @@ class BaseDocument(object):
         """
         return None
 
-    def save(self, **doc:dict)->str:                
+    def s(self, **doc:dict)->str:
+        """ call save with func params as a dict """
+        return self.save(doc)
+
+    def save(self, doc:DotMap)->str:                
+        """ save the dictionary and return his id """
         try:
             # if there isn't an id field, create and populate it
             if doc.get('id', None) is None: 
@@ -319,6 +362,15 @@ class BaseDocument(object):
             raise rDeleteException(ex, {'id':id})
         self.after_delete(id)        
 
+    def unescape_doc(self, doc:dict)->dict:
+        """ qunescape all str fields """
+        esc_doc={}
+        for k, v in doc.items():
+            if type(v).__name__=='str':
+                esc_doc[k]=self.db.qunescape(v)
+            else:
+                esc_doc[k]=v
+        return esc_doc
 
     def discover(self, doc: dict)->DotMap:
         """ discover first level foreign keys and include the result into the dict """        
@@ -328,12 +380,15 @@ class BaseDocument(object):
             # if this field is dependant
             if k.upper() in self.dependant: 
                 # include a get of the foreign key as member_name.data                
-                n[k]=DotMap(self.db.r.hgetall(v))
+                n[k]=self.unescape_doc(DotMap(self.db.r.hgetall(v)))
             else:
-                n[k]=v                      
+                if type(v).__name__=='str':
+                    n[k]=self.db.qunescape(v)
+                else:
+                    n[k]=v
         return DotMap(n)
 
-    def search(self, query:str, start:int=0, num:int=10, sort_by:str='id', direction:bool=True, slop=0)->list:
+    def search(self, query:str="*", start:int=0, num:int=10, sort_by:str='id', direction:bool=True, slop=0)->list:
         """ perform a query with the index
             ## Param
             * query - is the string query
@@ -354,7 +409,7 @@ class BaseDocument(object):
                 return result
             # discover first level foreign keys
             docs=result.docs
-            if result.total>0 and len(self.dependant)>0:
+            if result.total>0: # and len(self.dependant)>0:
                 docs_with_discover=[] # new list of docs
                 # for each document                
                 for doc in self.db.docs_to_dict(result.docs):
@@ -366,7 +421,7 @@ class BaseDocument(object):
         except Exception as ex:
             raise rSearchException(str(ex), {'query':query})
     
-    def paginate(self, query:str, page:int=1, num:int=10, sort_by:str='id', direction:bool=True, slop:int=0)->Pagination:
+    def paginate(self, query:str="*", page:int=1, num:int=10, sort_by:str='id', direction:bool=True, slop:int=0)->Pagination:
         try:     
             tic = time.perf_counter()       
             start=(page-1)*num
@@ -475,7 +530,7 @@ class rDatabase(object):
         """ a redis database with a collection of descriptions """
         self.r = r
         self.dependants=[]
-        self.delim='.' # do not use {:, /, #, ?} or anything related with url encoding
+        self.delim='_' # do not use {:, /, #, ?} or anything related with url encoding
 
     def set_fk(self, definition:Document, depends_of: Document)->None:
         self.dependants.append((definition, depends_of))
@@ -510,8 +565,31 @@ class rDatabase(object):
         for doc in docs:            
             fields = {}
             for field in dir(doc):
-                if (field.startswith('__')):
+                if (field.startswith('__') or field=='payload'):
                     continue
                 fields.update({ field : getattr(doc, field) })            
             reslist.append(fields)
         return reslist
+
+    def qescape(self, term:str)->str:
+        """ escape redisearch characters. use it in search field values.
+            https://oss.redislabs.com/redisearch/Escaping/        
+        """
+        if not term:
+            return ''
+        # chars:set=string.ascii_uppercase + string.ascii_lowercase + string.digits + '_'
+        chars=(',','.','<','>','{','}','[',']','"', '\'', ':',';','!','@','#','$','%','^','&','*','(',')','-','+','=','~')
+        t=''
+        for g in term:
+            if g in chars:
+                t+='\\'+g
+            else:
+                t+=g
+        return t
+
+    def qunescape(self, term:str)->str:
+        """ unescape redisearch characters. remove all backslash              
+        """
+        if not term:
+            return ''
+        return term.replace('\\', '')

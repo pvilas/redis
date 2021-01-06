@@ -2,6 +2,7 @@ import redis
 from rdatabase import BasicDocument, Document, rDatabase, BaseDefinition
 from loguru import logger
 from wtforms import Form, BooleanField, StringField, HiddenField, validators
+from wtforms.fields.html5 import EmailField
 from redisearch import Client, TextField, NumericField,\
                         TextField as DateField, TextField as DatetimeField,\
                         IndexDefinition, Query
@@ -9,16 +10,19 @@ from pprint import pprint
 import arrow
 from datetime import datetime
 from dotmap import DotMap
+from blessings import Terminal
 
 class Country(BasicDocument):
     pass
 
-class Persona(Document):
+class Person(Document):
     class Definition(BaseDefinition):        
         name = StringField('Name', validators=[validators.Length(max=50), validators.InputRequired()], render_kw=dict(indexed=True, on_table=True)) 
-        country = StringField( 'Pais', 
+        country = StringField( 'Country', 
                                 validators=[validators.Length(max=50), validators.InputRequired()], 
                                 render_kw=dict(indexed=True, on_table=True, dependant=True))
+        email = EmailField( 'Email', validators=[validators.Length(max=50)], 
+                                render_kw=dict(unique=True))
 
 
 class rTestDatabase(rDatabase):
@@ -28,14 +32,32 @@ class rTestDatabase(rDatabase):
 
         # create definition documents
         self.country=Country(self)
-        self.persona=Persona(self)
+        self.person=Person(self)
 
         # set dependencies
-        # persona has a country
-        self.set_fk(self.persona, self.country)
+        # person has a country
+        self.set_fk(self.person, self.country)
 
 
 if __name__ == "__main__":
+
+    t = Terminal() # ansi terminal
+
+    def title(s:str):        
+        print(f"\n{t.bold}{s}\n"+'-'*len(s)+f'{t.normal}')
+
+    def subtitle(s:str):        
+        print(f"\n{t.blue}{t.bold}{s}{t.normal}")
+
+    def subsubtitle(s:str):        
+        print(f"\n{t.green}{s}{t.normal}")
+
+    def p(s:str):        
+        print(f"{t.cyan}{s}{t.normal}")
+
+    def err(s:str):        
+        print(f"{t.red}{s}{t.normal}")
+
 
     # create redis conn 
     r=redis.Redis(
@@ -48,91 +70,104 @@ if __name__ == "__main__":
 
     db=rTestDatabase(r)
 
-    print("\nInformation about documents")
+    title("Information about documents")
     db.country.info()
-    db.persona.info()    
+    db.person.info()    
 
-    print("Create some documents\n")
+    subtitle("Create some documents")
     
-    print(db.country.save(id="ES", description="España"))
-    print(db.country.save(id="FR", description="Francia"))
-    print(db.country.save(id="DE", description="Alemania"))
-    print(db.country.save(id="IT", description="Italia"))
-    print(db.country.save(id="FI", description="Finlándia"))
+    p(db.country.save({'id': "ES", 'description':"España"}))
 
-    print(db.persona.save(name="Manuel", country=db.k("COUNTRY","ES")))
-    print(db.persona.save(name="Hermman", country=db.k("COUNTRY","DE")))
-    print(db.persona.save(name="Pierre", country=db.k("COUNTRY","FR")))
-    print(db.persona.save(name="Linux", country=db.k("COUNTRY","FI")))
+    p(db.country.save(dict(id="FR", description="Francia")))
+    p(db.country.save(dict(id="DE", description="Alemania")))
+    p(db.country.save(dict(id="IT", description="Italia")))
+    p(db.country.save(dict(id="FI", description="Finlándia")))
 
-    # list some data about persona
-    print("\nList personas, note the description of the country\n"+'-'*50)
-    for p in db.persona.search("*", sort_by="name").docs:        
-        print(p.name, p.country.description)
+    p(db.person.save(dict(name="Manuel", country=db.k("COUNTRY","ES"))))
+    p(db.person.save(dict(name="Hermman", country=db.k("COUNTRY","DE"))))
+    p(db.person.save(dict(name="Pierre", country=db.k("COUNTRY","FR"))))
+    p(db.person.save(dict(name="Linux", country=db.k("COUNTRY","FI"))))
 
-    print("\nTesting integrity mechanism...\n")
+    # list some data about person
+    subtitle("List persons, note the description of the country")
+    for d in db.person.search("*", sort_by="name").docs:        
+        p(f"{d.name}, {d.country.description}")
+
+    title("Testing integrity mechanism")
 
     # The country PP does not exist -> raise ex
     try:
-        print("Saving persona with non existent country...")
-        print(db.persona.save(name="Pere", country=db.k("COUNTRY","PP")))
+        subtitle("Saving person with non existent country...")
+        p(db.person.s(name="Pere", country=db.k("COUNTRY","PP")))
     except Exception as ex:
-        print(f"Saving with non existent foreign key raised an exception: {ex}")
+        err(f"Saving with non existent foreign key raised an exception: {ex}")
 
-    # delete a country and try to insert a new persona with it -> it will raise an exception
+    # delete a country and try to insert a new person with it -> it will raise an exception
     try:        
         db.country.delete(db.k("COUNTRY", "IT"))
-        print("\nSaving persona with a deleted foreign key...")
-        print(db.persona.save(name="Guiovani", country=db.k("COUNTRY","IT")))
+        subtitle("Saving person with a deleted foreign key...")
+        p(db.person.s(name="Guiovani", country=db.k("COUNTRY","IT")))
     except Exception as ex:
-        print(f"Saving with non existent foreign key raised an exception: {ex}")
+        err(f"Saving with non existent foreign key raised an exception: {ex}")
 
-    # create a persona with a deliminator and an invalid character in the key -> the key will be sanitized
-    print(f"\nSaving persona with a non-sanitized id  gúg.gg...")
-    print(db.persona.save(id=" gúg.gg", name="Michael", country=db.k("COUNTRY","FR")))
+    # create a person with a deliminator and an invalid character in the key -> the key will be sanitized
+    subtitle(f"Saving person with a non-sanitized id  gúg.gg...")
+    p(db.person.s(id=" gúg.gg", name="Michael", country=db.k("COUNTRY","FR")))
 
-    print(f"\nSaving persona with another non-sanitized id PERSONA. .ñ.xx .yy...")
-    print(db.persona.save(id="PERSONA. .ñ.xx .yy", name="François", country=db.k("COUNTRY","FR")))
+    subtitle(f"Saving person with another non-sanitized id person. .ñ.xx .yy...")
+    p(db.person.s(id="person. .ñ.xx .yy", name="François", country=db.k("COUNTRY","FR")))
 
-    # create a persona with an invalid key -> must raise an exception
+    # create a person with an invalid key -> must raise an exception
     try:
-        print("\nSaving with an invalid key...")
-        print(db.persona.save(id="PERSONA..", name="Must raise ex", country=db.k("COUNTRY","FR")))
+        subtitle("Saving with an invalid key...")
+        p(db.person.s(id="person..", name="Must raise ex", country=db.k("COUNTRY","FR")))
     except Exception as ex:
-        print(f"Saving with an invalid key raised an exception: {ex}")
+        err(f"Saving with an invalid key raised an exception: {ex}")
 
-    print("\nCreating some countries...\n"+'-'*30)
+    title("Creating some countries")
     import dataset
-    print("Created!")
+    p("Created!")
 
     # test pagination 
-    print("\nTesting pagination\n")    
+    title("Testing pagination")    
     page=5
     num=10
-    p=db.country.paginate(query="*", page=page, num=num, sort_by='description', direction=True)
-    print(f"\nDocuments in country, page {page} of {int(p.total/num)}: {num} results out of {p.total}\n"+'-'*60)
-    pprint(p.items)
+    d=db.country.paginate(query="*", page=page, num=num, sort_by='description', direction=True)
+    subtitle(f"Documents in country, page {page} of {int(d.total/num)}: {num} results out of {d.total}")
+    pprint(d.items)
 
-    print("\nSome searches...\n"+'-'*30)
-    print("\nPersonas whose name starts with 'her'")
-    pprint(db.persona.search(query="her*").docs)
-    print("\nPersonas whose country is ES")
-    pprint(db.persona.search(query=db.k("COUNTRY","ES")).docs)
-    print("\nGet the country Colombia")
+    title("Some searches")
+    subsubtitle(f"persons whose name starts with 'her'")
+    pprint(db.person.search(query="her*").docs)
+    subsubtitle("persons whose country is ES")
+    pprint(db.person.search(query=db.k("COUNTRY","ES")).docs)
+    subsubtitle("Get the country Colombia")
     pprint(db.country.get("COL"))
-    print("\nGet the countries with the exact description Chile")
-    pprint(db.country.search("@description:Chile").docs)
+    subsubtitle("Get the countries with the exact description Chile")
+    pprint(db.country.search("@description:\"Chile\"").docs)
 
-
-    print("\nUpdate documents\n"+'-'*30)
-    print("Find out a persona named Linux\n")
-    l=db.persona.search(query="Linux").docs[0]    
+    title("Update documents")
+    subtitle("Find out a person named Linux")
+    l=db.person.search(query="Linux").docs[0]    
     pprint(l)
-    print("\nUps.... The name is mispelled. Correcting to Linus ...\n")
+    subsubtitle("Ups.... The name is mispelled. Correcting to Linus ...")
     l.name="Linus"
-    k=db.persona.save(**l)
+    k=db.person.save(l)
     # save always return the id of the saved document
-    print("The updated document is")
-    pprint(db.persona.get(k))
+    subsubtitle("The updated document is")
+    pprint(db.person.get(k))
+
+    title("Test uniqueness")
+    p(db.person.s(name="Pere", country=db.country.k("NAM"), email="hola@nam.com"))
+    p(db.person.s(name="Josep", country=db.country.k("TCA"), email="hola1@nam.com"))
+    try:
+        p(db.person.s(name="Josep", country=db.country.k("TCA"), email="hola@nam.com"))
+    except Exception as ex:
+        err(f"Saving with an duplicated unique key raised an exception: {ex}")
+
+    subsubtitle("Who has the duplicated email?")
+    q=f"hola\@nam\.com"
+    p(f"Searching {q}")
+    pprint(db.person.search(q).docs)
 
     exit(0)
