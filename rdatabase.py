@@ -187,8 +187,8 @@ class BaseDocument(object):
         for d in self.uniques:
             q=f"@{d}:\"{doc.get(d)}\""            
             if doc.get(d) and self.search(q).total>0:
-                print(f"testing uniqueness of {d} by searching {q}")
-                raise rUniqueException(f"Value {doc.get(d)} already exists in document {self.prefix}, member {d}")
+                # print(f"testing uniqueness of {d} by searching {q}")
+                raise rUniqueException(f"Value {self.db.qunescape(doc.get(d))} already exists in document {self.prefix}, member {d}")
 
     def escape_doc(self, doc:dict)->dict:
         """ qescape all str fields """
